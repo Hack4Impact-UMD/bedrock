@@ -17,10 +17,16 @@ flowchart LR
         apigw["API Gateway"]
 
         subgraph lambda["Lambda · bedrock-api"]
+            direction TB
             api["<b>api</b><br/><small>router</small>"]
-            identity["<b>identity</b><br/><small>API key auth</small>"]
             courier["<b>courier</b><br/><small>transactional email</small>"]
+            identity["<b>identity</b><br/><small>API key auth</small>"]
             db["<b>db</b><br/><small>connection pool</small>"]
+            api --> courier
+            courier -- "project info,<br/>authorization" --> identity
+            api --> identity
+            identity --> db
+            courier --> db
         end
 
         ses["SES"]
@@ -32,12 +38,9 @@ flowchart LR
         courier_schema[("courier")]
     end
 
-    client -- HTTPS --> apigw --> api
-    api --> identity & courier
-    courier -- "project info,<br/>authorization" --> identity
-    identity & courier --> db
-    db --> identity_schema & courier_schema
-    courier --> ses
+    client -- HTTPS --> apigw --> lambda
+    lambda -- "pooled connection" --> neon
+    lambda -- email --> ses
     lambda -.-> logs
 
     classDef crate fill:#dbeafe,stroke:#2563eb,color:#0f172a
