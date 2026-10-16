@@ -252,8 +252,16 @@ data "aws_iam_policy_document" "deploy" {
   }
 
   statement {
-    sid     = "ApiGateway"
-    actions = ["apigateway:GET", "apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE"]
+    sid = "ApiGateway"
+    actions = [
+      "apigateway:GET",
+      "apigateway:POST",
+      "apigateway:PUT",
+      "apigateway:PATCH",
+      "apigateway:DELETE",
+      "apigateway:TagResource",
+      "apigateway:UntagResource",
+    ]
     resources = [
       "arn:aws:apigateway:${var.region}::/apis",
       "arn:aws:apigateway:${var.region}::/apis/*",
