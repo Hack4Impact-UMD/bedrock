@@ -10,23 +10,17 @@ More services (e.g. analytics, logging and alerting) can be added later. Inspire
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     client(["H4I project"])
 
     subgraph aws["AWS · us-east-2"]
         apigw["API Gateway"]
 
         subgraph lambda["Lambda · bedrock-api"]
-            direction TB
             api["<b>api</b><br/><small>router</small>"]
             courier["<b>courier</b><br/><small>transactional email</small>"]
             identity["<b>identity</b><br/><small>API key auth</small>"]
             db["<b>db</b><br/><small>connection pool</small>"]
-            api --> courier
-            courier -- "project info,<br/>authorization" --> identity
-            api --> identity
-            identity --> db
-            courier --> db
         end
 
         ses["SES"]
@@ -38,9 +32,14 @@ flowchart LR
         courier_schema[("courier")]
     end
 
-    client -- HTTPS --> apigw --> lambda
-    lambda -- "pooled connection" --> neon
-    lambda -- email --> ses
+    client -- HTTPS --> apigw --> api
+    api --> courier
+    courier -- "project info,<br/>authorization" --> identity
+    api --> identity
+    identity --> db
+    courier --> db
+    db --> identity_schema & courier_schema
+    courier --> ses
     lambda -.-> logs
 
     classDef crate fill:#dbeafe,stroke:#2563eb,color:#0f172a
