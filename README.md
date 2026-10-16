@@ -37,10 +37,6 @@ flowchart LR
 `bedrock` is a modular monolith. Each service is a library crate in `crates/`, and all of them compile into one
 Lambda binary. `api` is the only binary crate: it owns HTTP routing and calls into the service crates.
 
-Each service crate owns its own Postgres schema, tables, queries and migrations. Crates don't query each other's
-tables; they call each other's public Rust functions instead. The `db` crate holds only shared plumbing (the
-connection pool), not tables or domain types.
-
 ## Local development
 
 ### Prerequisites
