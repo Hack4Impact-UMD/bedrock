@@ -1,11 +1,11 @@
 # bedrock
 
-Shared foundational services for H4I projects, served over one HTTP API:
+An API providing shared foundational services for H4I projects:
 
 * Transactional email (AWS SES)
 * Per-project API key authentication
 
-More services (e.g. analytics, logging and alerting) can be added later. Inspired by <https://github.com/GTBitsOfGood/juno>
+More services (e.g. analytics, logging and alerting) can be added later. Inspired by GT Bits of Good's [juno](https://github.com/GTBitsOfGood/juno).
 
 ## Architecture
 
@@ -36,7 +36,7 @@ flowchart LR
 ```
 
 `bedrock` is a modular monolith. Each service is a library crate in `crates/`, and all of them compile into one
-Lambda binary. `api` is the only binary crate: it owns HTTP routing and calls into the service crates.
+Lambda binary. To add a service, simply add another crate and expose its public API.
 
 ## Local development
 
@@ -72,7 +72,7 @@ To correct format errors, use `cargo fmt --all` and `terraform fmt -recursive in
 
 ## Deployment
 
-Pull requests run CI only. Each push to `main` runs CI again, then deploys `api` to AWS Lambda behind API Gateway in `us-east-2` with `terraform apply` on `infra/`.
+Pushes to main trigger deployments automatically with Terraform. See the deploy GitHub action for details.
 
 ### Bootstrap AWS setup
 
