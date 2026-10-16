@@ -9,51 +9,14 @@ More services (e.g. analytics, logging and alerting) can be added later. Inspire
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    client(["H4I project"])
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
+  <img alt="Architecture diagram" src="docs/architecture-light.svg">
+</picture>
 
-    subgraph aws["AWS · us-east-2"]
-        apigw["API Gateway"]
-
-        subgraph lambda["Lambda · bedrock-api"]
-            api["<b>api</b><br/><small>router</small>"]
-            courier["<b>courier</b><br/><small>transactional email</small>"]
-            identity["<b>identity</b><br/><small>API key auth</small>"]
-            db["<b>db</b><br/><small>connection pool</small>"]
-        end
-
-        ses["SES"]
-        logs["CloudWatch Logs"]
-    end
-
-    subgraph neon["Neon Postgres"]
-        identity_schema[("identity")]
-        courier_schema[("courier")]
-    end
-
-    client -- HTTPS --> apigw --> api
-    api --> courier
-    courier -- "project info,<br/>authorization" --> identity
-    api --> identity
-    identity --> db
-    courier --> db
-    db --> identity_schema & courier_schema
-    courier --> ses
-    lambda -.-> logs
-
-    classDef crate fill:#dbeafe,stroke:#2563eb,color:#0f172a
-    classDef awsSvc fill:#ffedd5,stroke:#ea580c,color:#0f172a
-    classDef store fill:#dcfce7,stroke:#16a34a,color:#0f172a
-    classDef ext fill:#f1f5f9,stroke:#64748b,color:#0f172a
-    class api,identity,courier,db crate
-    class apigw,ses,logs awsSvc
-    class identity_schema,courier_schema store
-    class client ext
-    style aws fill:none,stroke:#ea580c,stroke-dasharray:5 5
-    style lambda fill:none,stroke:#2563eb
-    style neon fill:none,stroke:#16a34a,stroke-dasharray:5 5
-```
+<!-- Source: docs/architecture.mmd. Regenerate with:
+npx @mermaid-js/mermaid-cli@11.4.2 -i docs/architecture.mmd -o docs/architecture-light.svg -t default -b transparent
+npx @mermaid-js/mermaid-cli@11.4.2 -i docs/architecture.mmd -o docs/architecture-dark.svg -t dark -b transparent -->
 
 `bedrock` is a modular monolith. Each service is a library crate in `crates/`, and all of them compile into one
 Lambda binary. To add a service, simply add another crate and expose its public API.
