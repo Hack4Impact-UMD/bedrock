@@ -18,6 +18,7 @@ flowchart LR
         api["api<br/>router + Lambda entry point"]
         api --> identity["identity<br/>API key auth"]
         api --> courier["courier<br/>transactional email"]
+        courier -->|project info, authorization| identity
         identity --> db["db<br/>connection pool"]
         courier --> db
     end
