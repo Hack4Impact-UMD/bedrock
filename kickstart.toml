@@ -1,0 +1,10 @@
+[services]
+
+[services.db]
+command = "docker compose up"
+ready_condition = { port = 5433 }
+
+[services.lambda]
+command = "cargo lambda watch -p api --env-file=.env"
+depends_on = ["db"]
+ready_condition = { port = 9000 }
