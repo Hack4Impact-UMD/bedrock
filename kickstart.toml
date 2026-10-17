@@ -2,7 +2,7 @@
 
 [services.db]
 command = "docker compose up"
-ready_condition = { port = 5433 }
+ready_condition = { port = 5432 }
 
 [services.lambda]
 command = "cargo lambda watch -p api --env-file=.env"

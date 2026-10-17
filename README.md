@@ -29,13 +29,13 @@ Lambda binary. To add a service, simply add another crate and expose its public 
 
 ### Quick start
 
-This project supports [`kickstart`](https://github.com/rk234/kickstart). Run
+This project supports [`kickstart`](https://github.com/rk234/kickstart). After creating a `.env` based on `.env.example`, run:
 
 ```sh
 kickstart up
 ```
 
-To start the local postgres DB with docker compose and lambda emulator.
+This starts the local postgres DB with docker compose and lambda emulator. The API should be accessible on `localhost:9000`.
 
 Alternatively, you can start the db and lambda separately by reading the `kickstart.toml` file.
 
