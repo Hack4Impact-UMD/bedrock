@@ -3,4 +3,4 @@ mod identity;
 mod keys;
 mod projects;
 
-pub use identity::Identity;
+pub use identity::{Identity, IdentityError, NewApiKey};

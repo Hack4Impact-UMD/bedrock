@@ -13,41 +13,54 @@ pub struct ApiKey {
     pub project_id: Uuid,
     pub name: String,
     pub prefix: String,
-    pub hash: String,
+    pub hash: Vec<u8>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
 }
 
 pub trait ApiKeyRepo {
-    async fn lookup_key_from_hash_prefix(&self, prefix: &str, hash: &str) -> Result<ApiKey>;
-    async fn create(
+    fn lookup_key_from_hash_prefix(
         &self,
         prefix: &str,
-        hash: &str,
+        hash: &[u8],
+    ) -> impl Future<Output = Result<Option<ApiKey>>> + Send;
+    fn create(
+        &self,
+        prefix: &str,
+        hash: &[u8],
         name: &str,
         project: ProjectId,
-    ) -> Result<ApiKey>;
-    async fn get(&self, project: ProjectId, id: ApiKeyId) -> Result<ApiKey>;
-    async fn list(&self, project: ProjectId) -> Result<Vec<ApiKey>>;
-    async fn mark_used(&self, id: ApiKeyId) -> Result<()>;
-    async fn revoke(&self, project: ProjectId, id: ApiKeyId) -> Result<ApiKey>;
-    async fn delete(&self, project: ProjectId, id: ApiKeyId) -> Result<()>;
+    ) -> impl Future<Output = Result<ApiKey>> + Send;
+    fn get(&self, project: ProjectId, id: ApiKeyId) -> impl Future<Output = Result<ApiKey>> + Send;
+    fn list(&self, project: ProjectId) -> impl Future<Output = Result<Vec<ApiKey>>> + Send;
+    fn mark_used(&self, id: ApiKeyId) -> impl Future<Output = Result<()>> + Send;
+    fn revoke(
+        &self,
+        project: ProjectId,
+        id: ApiKeyId,
+    ) -> impl Future<Output = Result<ApiKey>> + Send;
+    fn delete(&self, project: ProjectId, id: ApiKeyId) -> impl Future<Output = Result<()>> + Send;
 }
 
-pub struct PostgresApiKeyRepo<'a> {
-    db: &'a PgPool,
+#[derive(Clone)]
+pub struct PostgresApiKeyRepo {
+    db: PgPool,
 }
 
-impl<'a> PostgresApiKeyRepo<'a> {
-    pub fn new(db: &'a PgPool) -> Self {
+impl PostgresApiKeyRepo {
+    pub fn new(db: PgPool) -> Self {
         Self { db }
     }
 }
 
-impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
-    async fn lookup_key_from_hash_prefix(&self, prefix: &str, hash: &str) -> Result<ApiKey> {
-        let key: ApiKey = sqlx::query_as(
+impl ApiKeyRepo for PostgresApiKeyRepo {
+    async fn lookup_key_from_hash_prefix(
+        &self,
+        prefix: &str,
+        hash: &[u8],
+    ) -> Result<Option<ApiKey>> {
+        let key: Option<ApiKey> = sqlx::query_as(
             r"
         select * from identity.api_keys 
         where hash = $1 and prefix = $2
@@ -56,7 +69,7 @@ impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
         .bind(hash)
         .bind(prefix)
         .persistent(false)
-        .fetch_one(self.db)
+        .fetch_optional(&self.db)
         .await?;
 
         Ok(key)
@@ -65,7 +78,7 @@ impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
     async fn create(
         &self,
         prefix: &str,
-        hash: &str,
+        hash: &[u8],
         name: &str,
         project: ProjectId,
     ) -> Result<ApiKey> {
@@ -81,7 +94,7 @@ impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
         .bind(prefix)
         .bind(hash)
         .persistent(false)
-        .fetch_one(self.db)
+        .fetch_one(&self.db)
         .await?;
 
         Ok(key)
@@ -97,7 +110,7 @@ impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
         .bind(project.0)
         .bind(id.0)
         .persistent(false)
-        .fetch_one(self.db)
+        .fetch_one(&self.db)
         .await?;
 
         Ok(key)
@@ -113,7 +126,7 @@ impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
         )
         .bind(project.0)
         .persistent(false)
-        .fetch_all(self.db)
+        .fetch_all(&self.db)
         .await?;
 
         Ok(keys)
@@ -129,7 +142,7 @@ impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
         )
         .bind(id.0)
         .persistent(false)
-        .execute(self.db)
+        .execute(&self.db)
         .await?;
 
         Ok(())
@@ -148,7 +161,7 @@ impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
         .bind(project.0)
         .bind(id.0)
         .persistent(false)
-        .fetch_one(self.db)
+        .fetch_one(&self.db)
         .await?;
 
         Ok(key)
@@ -164,7 +177,7 @@ impl<'a> ApiKeyRepo for PostgresApiKeyRepo<'a> {
         .bind(project.0)
         .bind(id.0)
         .persistent(false)
-        .execute(self.db)
+        .execute(&self.db)
         .await?;
 
         if result.rows_affected() == 0 {

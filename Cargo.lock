@@ -881,8 +881,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "db",
+ "rand",
  "sha2 0.11.1",
  "sqlx",
+ "thiserror",
  "uuid",
 ]
 
