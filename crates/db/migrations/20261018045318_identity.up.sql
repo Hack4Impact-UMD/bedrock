@@ -17,7 +17,9 @@ create table identity.api_keys (
     hash         bytea not null,
     created_at   timestamptz not null default now(),
     last_used_at timestamptz,
-    revoked_at   timestamptz
+    revoked_at   timestamptz,
+    -- Target for project-scoped foreign keys, e.g. from courier.emails.
+    unique (project_id, id)
 );
 
 create index api_keys_project_id_idx on identity.api_keys (project_id);
