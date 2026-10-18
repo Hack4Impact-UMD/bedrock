@@ -10,9 +10,9 @@ use crate::{
 const FIRST_KEY_NAME: &str = "default";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProjectId(pub(crate) Uuid);
+pub struct ProjectId(pub Uuid);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ApiKeyId(pub(crate) Uuid);
+pub struct ApiKeyId(pub Uuid);
 
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityError {
