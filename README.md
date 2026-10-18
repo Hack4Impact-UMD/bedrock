@@ -73,4 +73,5 @@ Do this once per AWS account. If you are reading this on the main repo, you can 
    local only (`infra/bootstrap/terraform.tfstate`), so back it up.
 2. In GitHub, create a `production` environment limited to `main`. Give it a variable `AWS_DEPLOY_ROLE_ARN` set to the
    `deploy_role_arn` output. Also give it a secret `DATABASE_URL` set to the Neon **direct** (non-pooler) connection
-   string. The deploy job uses it to run migrations.
+   string. The deploy job uses it to run migrations. Add a secret `DATABASE_POOLED_URL` set to the Neon **pooled**
+   connection string. The Lambda uses it at runtime.

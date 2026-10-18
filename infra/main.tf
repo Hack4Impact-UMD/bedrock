@@ -64,6 +64,12 @@ resource "aws_lambda_function" "api" {
   memory_size      = 128
   timeout          = 10
 
+  environment {
+    variables = {
+      DATABASE_URL = var.database_url
+    }
+  }
+
   depends_on = [
     aws_cloudwatch_log_group.api,
     aws_iam_role_policy_attachment.lambda_logs,

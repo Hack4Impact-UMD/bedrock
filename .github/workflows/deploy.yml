@@ -51,4 +51,6 @@ jobs:
           terraform_wrapper: false
       - run: terraform -chdir=infra init -input=false
       - run: terraform -chdir=infra apply -input=false -auto-approve
+        env:
+          TF_VAR_database_url: ${{ secrets.DATABASE_POOLED_URL }}
       - run: echo "Deployed to $(terraform -chdir=infra output -raw api_endpoint)" >> "$GITHUB_STEP_SUMMARY"

@@ -30,3 +30,9 @@ variable "lambda_boundary_name" {
   type        = string
   default     = "bedrock-lambda-boundary"
 }
+
+variable "database_url" {
+  description = "Neon pooled connection string, exposed to the Lambda as DATABASE_URL."
+  type        = string
+  sensitive   = true
+}
