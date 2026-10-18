@@ -14,10 +14,6 @@ More services (e.g. analytics, logging and alerting) can be added later. Inspire
   <img alt="Architecture diagram" src="docs/architecture-light.svg">
 </picture>
 
-<!-- Source: docs/architecture.mmd. Regenerate with:
-npx @mermaid-js/mermaid-cli@11.4.2 -i docs/architecture.mmd -o docs/architecture-light.svg -t default -b transparent
-npx @mermaid-js/mermaid-cli@11.4.2 -i docs/architecture.mmd -o docs/architecture-dark.svg -t dark -b transparent -->
-
 `bedrock` is a modular monolith. Each service is a library crate in `crates/`, and all of them compile into one
 Lambda binary. To add a service, simply add another crate and expose its public API.
 
@@ -27,18 +23,25 @@ Lambda binary. To add a service, simply add another crate and expose its public 
 
 * Rust (stable). Install it with [rustup](https://rustup.rs).
 * cargo-lambda
+* Docker (or Podman) with Compose
+* sqlx-cli: `cargo install sqlx-cli --no-default-features --features rustls,postgres`
 * Terraform 1.11 or later (only if you need to modify AWS infra)
 
-### Start the API
+### Quick start
 
-1. Start the local Lambda emulator:
-   ```sh
-   cargo lambda watch
-   ```
-2. Send a request to the API:
-   ```sh
-   curl localhost:9000/
-   ```
+This project supports [`kickstart`](https://github.com/rk234/kickstart). After creating a `.env` based on `.env.example`, run:
+
+```sh
+kickstart up
+```
+
+This starts the local postgres DB with docker compose and lambda emulator. The API should be accessible on `localhost:9000`.
+
+Alternatively, you can start the db and lambda separately by reading the `kickstart.toml` file.
+
+Add migrations with `sqlx migrate add -r --source crates/db/migrations <name>`. Run `cargo test` to apply them to a
+scratch database.
+
 ### CI checks
 
 CI does these checks on each pull request.
@@ -69,4 +72,5 @@ Do this once per AWS account. If you are reading this on the main repo, you can 
    If the account already has a GitHub OIDC provider, add `-var create_oidc_provider=false`. Bootstrap state is
    local only (`infra/bootstrap/terraform.tfstate`), so back it up.
 2. In GitHub, create a `production` environment limited to `main`. Give it a variable `AWS_DEPLOY_ROLE_ARN` set to the
-   `deploy_role_arn` output.
+   `deploy_role_arn` output. Also give it a secret `DATABASE_URL` set to the Neon **direct** (non-pooler) connection
+   string. The deploy job uses it to run migrations.

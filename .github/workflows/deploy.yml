@@ -35,6 +35,12 @@ jobs:
       - run: pip install cargo-lambda
       - run: cargo lambda build --release --arm64 --bin api --locked --output-format zip
 
+      # Runs before the new code ships, so migrations must stay compatible with the code currently deployed.
+      - run: cargo install sqlx-cli --locked --no-default-features --features rustls,postgres
+      - run: sqlx migrate run --source crates/db/migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
