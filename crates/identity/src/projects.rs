@@ -1,5 +1,6 @@
 use anyhow::Result;
 use db::PgPool;
+use serde::Serialize;
 use sqlx::PgExecutor;
 use sqlx::prelude::FromRow;
 use sqlx::types::chrono::DateTime;
@@ -9,7 +10,7 @@ use uuid::Uuid;
 use crate::identity::ProjectId;
 use crate::keys::{ApiKey, insert_key};
 
-#[derive(FromRow, Debug)]
+#[derive(FromRow, Debug, Serialize)]
 pub struct Project {
     pub id: Uuid,
     pub slug: String,
