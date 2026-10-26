@@ -20,7 +20,5 @@ async fn get_project(
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/hi", get(|| async { "hello from identity" }))
-        .route("/project", get(get_project))
+    Router::new().route("/project", get(get_project))
 }
