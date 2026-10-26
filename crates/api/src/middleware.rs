@@ -1,34 +1,33 @@
 use axum::{
     extract::{Request, State},
-    http::{self, StatusCode},
+    http,
     middleware::Next,
     response::Response,
 };
-use identity::IdentityError;
+use identity::{ApiKeyId, IdentityError, ProjectId};
 
-use crate::AppState;
+use crate::{AppState, error::ApiError};
+
+#[derive(Clone, Copy)]
+pub struct AuthContext {
+    pub project: ProjectId,
+    pub key: ApiKeyId,
+}
 
 pub async fn api_key_auth(
     State(state): State<AppState>,
     mut req: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, ApiError> {
     let key = req
         .headers()
         .get(http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .ok_or(IdentityError::InvalidKey)?;
 
-    let project = state
-        .identity
-        .authenticate_api_key(key)
-        .await
-        .map_err(|err| match err {
-            IdentityError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            _ => StatusCode::UNAUTHORIZED,
-        })?;
+    let (project, key) = state.identity.authenticate_api_key(key).await?;
 
-    req.extensions_mut().insert(project);
+    req.extensions_mut().insert(AuthContext { project, key });
     Ok(next.run(req).await)
 }

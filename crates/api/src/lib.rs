@@ -1,6 +1,7 @@
 use axum::{Json, Router, routing::get};
 use identity::PgIdentityService;
 use serde::Serialize;
+mod error;
 mod middleware;
 mod v1;
 

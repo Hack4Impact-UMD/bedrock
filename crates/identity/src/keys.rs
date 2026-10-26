@@ -1,5 +1,6 @@
 use anyhow::Result;
 use db::PgPool;
+use serde::Serialize;
 use sqlx::PgExecutor;
 use sqlx::prelude::FromRow;
 use sqlx::types::chrono::DateTime;
@@ -8,12 +9,13 @@ use uuid::Uuid;
 
 use crate::identity::{ApiKeyId, ProjectId};
 
-#[derive(FromRow, Debug)]
+#[derive(FromRow, Debug, Serialize)]
 pub struct ApiKey {
     pub id: Uuid,
     pub project_id: Uuid,
     pub name: String,
     pub prefix: String,
+    #[serde(skip)]
     pub hash: Vec<u8>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
