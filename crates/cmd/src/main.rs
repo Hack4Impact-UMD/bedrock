@@ -8,7 +8,7 @@ mod key;
 mod output;
 mod project;
 
-/// Operator CLI for bedrock. Connects to the database directly, so it needs its credentials.
+/// Operator CLI for bedrock.
 #[derive(Parser)]
 #[command(name = "bedrock", version)]
 struct Cli {
