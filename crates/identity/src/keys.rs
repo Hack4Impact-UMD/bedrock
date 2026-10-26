@@ -9,41 +9,17 @@ use uuid::Uuid;
 
 use crate::identity::{ApiKeyId, ProjectId};
 
-#[derive(FromRow, Debug)]
+#[derive(FromRow, Debug, Serialize)]
 pub struct ApiKey {
     pub id: Uuid,
     pub project_id: Uuid,
     pub name: String,
     pub prefix: String,
+    #[serde(skip)]
     pub hash: Vec<u8>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Serialize)]
-pub struct ApiKeyResponse {
-    pub id: Uuid,
-    pub project_id: Uuid,
-    pub name: String,
-    pub prefix: String,
-    pub created_at: DateTime<Utc>,
-    pub last_used_at: Option<DateTime<Utc>>,
-    pub revoked_at: Option<DateTime<Utc>>,
-}
-
-impl From<ApiKey> for ApiKeyResponse {
-    fn from(value: ApiKey) -> Self {
-        Self {
-            id: value.id,
-            project_id: value.project_id,
-            name: value.name,
-            prefix: value.prefix,
-            created_at: value.created_at,
-            last_used_at: value.last_used_at,
-            revoked_at: value.revoked_at,
-        }
-    }
 }
 
 pub trait ApiKeyRepo {

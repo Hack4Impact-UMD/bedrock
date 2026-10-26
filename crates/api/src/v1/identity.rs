@@ -1,43 +1,31 @@
 use axum::{
     Extension, Json, Router,
     extract::State,
-    http::StatusCode,
     routing::{delete, get},
 };
-use identity::{ApiKeyResponse, Project};
+use identity::{ApiKey, Project};
 
-use crate::{AppState, middleware::AuthExtension};
+use crate::{AppState, error::ApiError, middleware::AuthContext};
 
 async fn get_project(
     State(state): State<AppState>,
-    Extension((project_id, _)): Extension<AuthExtension>,
-) -> Result<Json<Project>, StatusCode> {
-    let project = state
-        .identity
-        .get_project(project_id)
-        .await
-        .map_err(|err| match err {
-            identity::IdentityError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            _ => StatusCode::NOT_FOUND,
-        })?;
+    Extension(auth): Extension<AuthContext>,
+) -> Result<Json<Project>, ApiError> {
+    let project = state.identity.get_project(auth.project).await?;
 
     Ok(Json(project))
 }
 
 async fn revoke_key(
     State(state): State<AppState>,
-    Extension((project_id, key_id)): Extension<AuthExtension>,
-) -> Result<Json<ApiKeyResponse>, StatusCode> {
+    Extension(auth): Extension<AuthContext>,
+) -> Result<Json<ApiKey>, ApiError> {
     let revoked = state
         .identity
-        .revoke_api_key(project_id, key_id)
-        .await
-        .map_err(|err| match err {
-            identity::IdentityError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            _ => StatusCode::NOT_FOUND,
-        })?;
+        .revoke_api_key(auth.project, auth.key)
+        .await?;
 
-    Ok(Json(ApiKeyResponse::from(revoked)))
+    Ok(Json(revoked))
 }
 
 pub fn router() -> Router<AppState> {
