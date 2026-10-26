@@ -1,9 +1,7 @@
 use axum::{
     Extension, Json, Router,
-    body::Body,
-    extract::{Request, State},
+    extract::State,
     http::StatusCode,
-    response::Response,
     routing::get,
 };
 use identity::{Project, ProjectId};
@@ -23,7 +21,7 @@ async fn get_project(
             _ => StatusCode::NOT_FOUND,
         })?;
 
-    return Ok(Json(project));
+    Ok(Json(project))
 }
 
 pub fn router() -> Router<AppState> {
