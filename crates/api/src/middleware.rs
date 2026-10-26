@@ -4,9 +4,11 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use identity::IdentityError;
+use identity::{ApiKeyId, IdentityError, ProjectId};
 
 use crate::AppState;
+
+pub type AuthExtension = (ProjectId, ApiKeyId);
 
 pub async fn api_key_auth(
     State(state): State<AppState>,
@@ -20,7 +22,7 @@ pub async fn api_key_auth(
         .and_then(|h| h.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let project = state
+    let auth = state
         .identity
         .authenticate_api_key(key)
         .await
@@ -29,6 +31,6 @@ pub async fn api_key_auth(
             _ => StatusCode::UNAUTHORIZED,
         })?;
 
-    req.extensions_mut().insert(project);
+    req.extensions_mut().insert(auth);
     Ok(next.run(req).await)
 }

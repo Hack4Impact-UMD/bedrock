@@ -49,7 +49,10 @@ impl<K: ApiKeyRepo, P: ProjectRepo> Identity<K, P> {
         Self { keys, projects }
     }
 
-    pub async fn authenticate_api_key(&self, key: &str) -> Result<ProjectId, IdentityError> {
+    pub async fn authenticate_api_key(
+        &self,
+        key: &str,
+    ) -> Result<(ProjectId, ApiKeyId), IdentityError> {
         let (prefix, hash) = hash_api_key(key).ok_or(IdentityError::InvalidKey)?;
         let key = self
             .keys
@@ -63,7 +66,7 @@ impl<K: ApiKeyRepo, P: ProjectRepo> Identity<K, P> {
 
         self.keys.mark_used(ApiKeyId(key.id)).await?;
 
-        Ok(ProjectId(key.project_id))
+        Ok((ProjectId(key.project_id), ApiKeyId(key.id)))
     }
 
     pub async fn create_api_key(
@@ -215,15 +218,13 @@ mod tests {
         let project = create_project(&pool).await;
         let identity = Identity::postgres(pool);
         let new_key = identity.create_api_key(project, "test").await.unwrap();
-        let id = ApiKeyId(new_key.key.id);
-
-        let authed = identity
+        let (authed, key_id) = identity
             .authenticate_api_key(&new_key.plaintext)
             .await
             .unwrap();
         assert_eq!(authed, project);
 
-        let revoked = identity.revoke_api_key(project, id).await.unwrap();
+        let revoked = identity.revoke_api_key(project, key_id).await.unwrap();
         assert!(revoked.revoked_at.is_some());
         assert!(matches!(
             identity.authenticate_api_key(&new_key.plaintext).await,
@@ -316,11 +317,12 @@ mod tests {
         let (project, new_key) = identity.create_project("demo", "Demo").await.unwrap();
 
         assert_eq!(new_key.key.name, FIRST_KEY_NAME);
-        let authed = identity
+        let (authed, key) = identity
             .authenticate_api_key(&new_key.plaintext)
             .await
             .unwrap();
         assert_eq!(authed, ProjectId(project.id));
+        assert_eq!(key, ApiKeyId(new_key.key.id));
     }
 
     #[sqlx::test(migrations = "../db/migrations")]

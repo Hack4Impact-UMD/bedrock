@@ -1,5 +1,6 @@
 use anyhow::Result;
 use db::PgPool;
+use serde::Serialize;
 use sqlx::PgExecutor;
 use sqlx::prelude::FromRow;
 use sqlx::types::chrono::DateTime;
@@ -18,6 +19,31 @@ pub struct ApiKey {
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+pub struct ApiKeyResponse {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub name: String,
+    pub prefix: String,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+impl From<ApiKey> for ApiKeyResponse {
+    fn from(value: ApiKey) -> Self {
+        Self {
+            id: value.id,
+            project_id: value.project_id,
+            name: value.name,
+            prefix: value.prefix,
+            created_at: value.created_at,
+            last_used_at: value.last_used_at,
+            revoked_at: value.revoked_at,
+        }
+    }
 }
 
 pub trait ApiKeyRepo {
