@@ -6,3 +6,5 @@ mod projects;
 pub use identity::{ApiKeyId, Identity, IdentityError, NewApiKey, ProjectId};
 pub use keys::ApiKey;
 pub use projects::Project;
+
+pub type PgIdentityService = Identity<keys::PostgresApiKeyRepo, projects::PostgresProjectRepo>;

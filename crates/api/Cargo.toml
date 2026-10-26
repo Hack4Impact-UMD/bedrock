@@ -7,3 +7,6 @@ edition = "2024"
 axum.workspace = true
 lambda_http.workspace = true
 tokio.workspace = true
+identity.workspace = true
+serde.workspace = true
+db.workspace = true
