@@ -48,6 +48,7 @@ pub async fn run(cmd: ProjectCmd, identity: &PgIdentityService, out: &Output) ->
             out.project(&renamed)
         }
         ProjectCmd::Delete { project, yes } => {
+            //TODO: after integrating SES, cleanup associated project resources here!
             let project = resolve_project(identity, &project).await?;
             let question = format!(
                 "Delete project '{}' and all of its keys and courier rows?",
@@ -64,15 +65,19 @@ pub async fn run(cmd: ProjectCmd, identity: &PgIdentityService, out: &Output) ->
     }
 }
 
-/// Looks a project up by ID if `project` parses as a UUID, otherwise by slug.
+/// Looks a project up by ID if `project` parses as a UUID, falling back to slug
+/// so UUID-shaped slugs still resolve.
 pub async fn resolve_project(
     identity: &PgIdentityService,
     project: &str,
 ) -> Result<Project, IdentityError> {
-    match Uuid::parse_str(project) {
-        Ok(id) => identity.get_project(ProjectId(id)).await,
-        Err(_) => identity.get_project_by_slug(project).await,
+    if let Ok(id) = Uuid::parse_str(project) {
+        match identity.get_project(ProjectId(id)).await {
+            Err(IdentityError::ProjectNotFound) => {}
+            result => return result,
+        }
     }
+    identity.get_project_by_slug(project).await
 }
 
 #[cfg(test)]
@@ -92,6 +97,16 @@ mod tests {
                 project.id
             );
         }
+        let uuid_slug = Uuid::new_v4().to_string();
+        let (uuid_project, _) = identity
+            .create_project(&uuid_slug, "UUID slug")
+            .await
+            .unwrap();
+        assert_eq!(
+            resolve_project(&identity, &uuid_slug).await.unwrap().id,
+            uuid_project.id
+        );
+
         for input in ["missing".to_owned(), Uuid::new_v4().to_string()] {
             assert!(matches!(
                 resolve_project(&identity, &input).await,
