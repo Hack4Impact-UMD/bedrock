@@ -2,9 +2,9 @@
 
 [services.db]
 command = "docker compose up"
-ready_condition = { port = 5432 }
+ready_condition = { port = "{POSTGRES_PORT:-5432}" }
 
 [services.lambda]
-command = "cargo lambda watch -p api --env-file=.env"
+command = "cargo lambda watch -p api --env-file=.env -P=$LAMBDA_PORT"
 depends_on = ["db"]
-ready_condition = { port = 9000 }
+ready_condition = { port = "{LAMBDA_PORT:-9000}" }
