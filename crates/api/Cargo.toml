@@ -10,3 +10,5 @@ tokio.workspace = true
 identity.workspace = true
 serde.workspace = true
 db.workspace = true
+aws-config.workspace = true
+aws-sdk-ses.workspace = true
