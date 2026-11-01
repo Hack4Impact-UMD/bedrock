@@ -11,4 +11,4 @@ identity.workspace = true
 serde.workspace = true
 db.workspace = true
 aws-config.workspace = true
-aws-sdk-ses.workspace = true
+aws-sdk-sesv2.workspace = true

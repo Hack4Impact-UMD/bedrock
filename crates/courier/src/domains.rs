@@ -21,6 +21,13 @@ pub enum DomainStatus {
     TemporaryFailure,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DomainCheck {
+    // verification status
+    pub status: DomainStatus,
+    pub mail_from_status: DomainStatus,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DnsRecord {
     #[serde(rename = "type")]
@@ -35,6 +42,7 @@ pub struct Domain {
     pub project_id: Uuid,
     pub domain: String,
     pub status: DomainStatus,
+    pub mail_from_status: DomainStatus,
     pub dns_records: Json<Vec<DnsRecord>>,
     pub created_at: DateTime<Utc>,
     pub last_checked_at: Option<DateTime<Utc>>,
@@ -64,7 +72,7 @@ pub trait DomainRepo {
     fn record_check(
         &self,
         id: DomainId,
-        status: DomainStatus,
+        check: DomainCheck,
     ) -> impl Future<Output = Result<Option<Domain>>> + Send;
     /// Returns whether a domain was deleted.
     fn delete(&self, project: ProjectId, id: DomainId)
@@ -150,11 +158,12 @@ impl DomainRepo for PostgresDomainRepo {
         Ok(domains)
     }
 
-    async fn record_check(&self, id: DomainId, status: DomainStatus) -> Result<Option<Domain>> {
+    async fn record_check(&self, id: DomainId, check: DomainCheck) -> Result<Option<Domain>> {
         let domain: Option<Domain> = sqlx::query_as(
             r"
         update courier.domains
         set status = $2,
+            mail_from_status = $3,
             last_checked_at = now(),
             verified_at = case when $2 = 'verified' then coalesce(verified_at, now()) else verified_at end
         where id = $1
@@ -162,7 +171,8 @@ impl DomainRepo for PostgresDomainRepo {
         ",
         )
         .bind(id.0)
-        .bind(status)
+        .bind(check.status)
+        .bind(check.mail_from_status)
         .fetch_optional(&self.db)
         .await?;
 
@@ -201,6 +211,13 @@ mod tests {
         ProjectId(id)
     }
 
+    fn dkim(status: DomainStatus) -> DomainCheck {
+        DomainCheck {
+            status,
+            mail_from_status: DomainStatus::Pending,
+        }
+    }
+
     fn records() -> Vec<DnsRecord> {
         vec![DnsRecord {
             record_type: "CNAME".into(),
@@ -220,6 +237,7 @@ mod tests {
         let id = DomainId(created.id);
 
         assert_eq!(created.status, DomainStatus::Pending);
+        assert_eq!(created.mail_from_status, DomainStatus::Pending);
         assert_eq!(created.dns_records.0, records());
         assert!(created.last_checked_at.is_none());
         assert!(created.verified_at.is_none());
@@ -233,7 +251,7 @@ mod tests {
         assert!(repo.get(project, id).await.unwrap().is_none());
         assert!(!repo.delete(project, id).await.unwrap());
         assert!(
-            repo.record_check(id, DomainStatus::Verified)
+            repo.record_check(id, dkim(DomainStatus::Verified))
                 .await
                 .unwrap()
                 .is_none()
@@ -275,7 +293,7 @@ mod tests {
         );
 
         let pending = repo
-            .record_check(id, DomainStatus::Pending)
+            .record_check(id, dkim(DomainStatus::Pending))
             .await
             .unwrap()
             .unwrap();
@@ -283,7 +301,7 @@ mod tests {
         assert!(pending.verified_at.is_none());
 
         let verified = repo
-            .record_check(id, DomainStatus::Verified)
+            .record_check(id, dkim(DomainStatus::Verified))
             .await
             .unwrap()
             .unwrap();
@@ -291,7 +309,7 @@ mod tests {
         assert!(verified.verified_at.is_some());
 
         let failed = repo
-            .record_check(id, DomainStatus::Failed)
+            .record_check(id, dkim(DomainStatus::Failed))
             .await
             .unwrap()
             .unwrap();
@@ -299,11 +317,25 @@ mod tests {
         assert_eq!(failed.verified_at, verified.verified_at);
 
         let reverified = repo
-            .record_check(id, DomainStatus::Verified)
+            .record_check(id, dkim(DomainStatus::Verified))
             .await
             .unwrap()
             .unwrap();
         assert_eq!(reverified.verified_at, verified.verified_at);
+
+        let mail_from = repo
+            .record_check(
+                id,
+                DomainCheck {
+                    status: DomainStatus::Verified,
+                    mail_from_status: DomainStatus::Verified,
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(mail_from.mail_from_status, DomainStatus::Verified);
+        assert_eq!(mail_from.verified_at, verified.verified_at);
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
