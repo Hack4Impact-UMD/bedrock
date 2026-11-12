@@ -21,6 +21,38 @@ pub enum DomainStatus {
     TemporaryFailure,
 }
 
+#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[sqlx(type_name = "courier.domain_scope", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum DomainScope {
+    /// Owned by one project, which alone can send from it.
+    Project,
+    /// Owned by no project; any project can send from it.
+    Shared,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DomainOwner {
+    Project(ProjectId),
+    Shared,
+}
+
+impl DomainOwner {
+    fn scope(self) -> DomainScope {
+        match self {
+            Self::Project(_) => DomainScope::Project,
+            Self::Shared => DomainScope::Shared,
+        }
+    }
+
+    fn project_id(self) -> Option<Uuid> {
+        match self {
+            Self::Project(project) => Some(project.0),
+            Self::Shared => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DomainCheck {
     // verification status
@@ -39,7 +71,9 @@ pub struct DnsRecord {
 #[derive(FromRow, Debug, Serialize)]
 pub struct Domain {
     pub id: Uuid,
-    pub project_id: Uuid,
+    /// None exactly when `scope` is shared.
+    pub project_id: Option<Uuid>,
+    pub scope: DomainScope,
     pub domain: String,
     pub status: DomainStatus,
     pub mail_from_status: DomainStatus,
@@ -49,10 +83,19 @@ pub struct Domain {
     pub verified_at: Option<DateTime<Utc>>,
 }
 
+impl Domain {
+    pub fn owner(&self) -> DomainOwner {
+        match (self.scope, self.project_id) {
+            (DomainScope::Project, Some(id)) => DomainOwner::Project(ProjectId(id)),
+            _ => DomainOwner::Shared,
+        }
+    }
+}
+
 pub trait DomainRepo {
     fn create(
         &self,
-        project: ProjectId,
+        owner: DomainOwner,
         domain: &str,
         dns_records: &[DnsRecord],
     ) -> impl Future<Output = Result<Domain>> + Send;
@@ -67,6 +110,7 @@ pub trait DomainRepo {
         project: ProjectId,
         domain: &str,
     ) -> impl Future<Output = Result<Option<Domain>>> + Send;
+    /// The project's own domains followed by shared ones.
     fn list(&self, project: ProjectId) -> impl Future<Output = Result<Vec<Domain>>> + Send;
     /// Records the result of a verification check.
     fn record_check(
@@ -75,7 +119,7 @@ pub trait DomainRepo {
         check: DomainCheck,
     ) -> impl Future<Output = Result<Option<Domain>>> + Send;
     /// Returns whether a domain was deleted.
-    fn delete(&self, project: ProjectId, id: DomainId)
+    fn delete(&self, owner: DomainOwner, id: DomainId)
     -> impl Future<Output = Result<bool>> + Send;
 }
 
@@ -93,18 +137,19 @@ impl PostgresDomainRepo {
 impl DomainRepo for PostgresDomainRepo {
     async fn create(
         &self,
-        project: ProjectId,
+        owner: DomainOwner,
         domain: &str,
         dns_records: &[DnsRecord],
     ) -> Result<Domain> {
         let domain: Domain = sqlx::query_as(
             r"
-        insert into courier.domains (project_id, domain, dns_records)
-        values ($1, $2, $3)
+        insert into courier.domains (project_id, scope, domain, dns_records)
+        values ($1, $2, $3, $4)
         returning *
         ",
         )
-        .bind(project.0)
+        .bind(owner.project_id())
+        .bind(owner.scope())
         .bind(domain)
         .bind(Json(dns_records))
         .fetch_one(&self.db)
@@ -117,7 +162,7 @@ impl DomainRepo for PostgresDomainRepo {
         let domain: Option<Domain> = sqlx::query_as(
             r"
         select * from courier.domains
-        where project_id = $1 and id = $2
+        where id = $2 and (project_id = $1 or scope = 'shared')
         ",
         )
         .bind(project.0)
@@ -132,7 +177,7 @@ impl DomainRepo for PostgresDomainRepo {
         let domain: Option<Domain> = sqlx::query_as(
             r"
         select * from courier.domains
-        where project_id = $1 and lower(domain) = lower($2)
+        where lower(domain) = lower($2) and (project_id = $1 or scope = 'shared')
         ",
         )
         .bind(project.0)
@@ -147,8 +192,8 @@ impl DomainRepo for PostgresDomainRepo {
         let domains: Vec<Domain> = sqlx::query_as(
             r"
         select * from courier.domains
-        where project_id = $1
-        order by created_at
+        where project_id = $1 or scope = 'shared'
+        order by scope, created_at
         ",
         )
         .bind(project.0)
@@ -179,15 +224,16 @@ impl DomainRepo for PostgresDomainRepo {
         Ok(domain)
     }
 
-    async fn delete(&self, project: ProjectId, id: DomainId) -> Result<bool> {
+    async fn delete(&self, owner: DomainOwner, id: DomainId) -> Result<bool> {
         let result = sqlx::query(
             r"
         delete from courier.domains
-        where project_id = $1 and id = $2
+        where id = $1 and scope = $2 and project_id is not distinct from $3
         ",
         )
-        .bind(project.0)
         .bind(id.0)
+        .bind(owner.scope())
+        .bind(owner.project_id())
         .execute(&self.db)
         .await?;
 
@@ -231,7 +277,7 @@ mod tests {
         let project = create_project(&pool, "demo").await;
         let repo = PostgresDomainRepo::new(pool);
         let created = repo
-            .create(project, "example.com", &records())
+            .create(DomainOwner::Project(project), "example.com", &records())
             .await
             .unwrap();
         let id = DomainId(created.id);
@@ -247,9 +293,18 @@ mod tests {
         assert_eq!(fetched.dns_records.0, records());
         assert_eq!(repo.list(project).await.unwrap().len(), 1);
 
-        assert!(repo.delete(project, id).await.unwrap());
+        assert!(
+            repo.delete(DomainOwner::Project(project), id)
+                .await
+                .unwrap()
+        );
         assert!(repo.get(project, id).await.unwrap().is_none());
-        assert!(!repo.delete(project, id).await.unwrap());
+        assert!(
+            !repo
+                .delete(DomainOwner::Project(project), id)
+                .await
+                .unwrap()
+        );
         assert!(
             repo.record_check(id, dkim(DomainStatus::Verified))
                 .await
@@ -263,7 +318,7 @@ mod tests {
         let project = create_project(&pool, "demo").await;
         let repo = PostgresDomainRepo::new(pool);
         let created = repo
-            .create(project, "Example.com", &records())
+            .create(DomainOwner::Project(project), "Example.com", &records())
             .await
             .unwrap();
 
@@ -286,7 +341,7 @@ mod tests {
         let project = create_project(&pool, "demo").await;
         let repo = PostgresDomainRepo::new(pool);
         let id = DomainId(
-            repo.create(project, "example.com", &records())
+            repo.create(DomainOwner::Project(project), "example.com", &records())
                 .await
                 .unwrap()
                 .id,
@@ -344,7 +399,7 @@ mod tests {
         let other = create_project(&pool, "other").await;
         let repo = PostgresDomainRepo::new(pool);
         let id = DomainId(
-            repo.create(project, "example.com", &records())
+            repo.create(DomainOwner::Project(project), "example.com", &records())
                 .await
                 .unwrap()
                 .id,
@@ -358,7 +413,7 @@ mod tests {
                 .is_none()
         );
         assert!(repo.list(other).await.unwrap().is_empty());
-        assert!(!repo.delete(other, id).await.unwrap());
+        assert!(!repo.delete(DomainOwner::Project(other), id).await.unwrap());
         assert!(repo.get(project, id).await.unwrap().is_some());
     }
 
@@ -367,10 +422,134 @@ mod tests {
         let project = create_project(&pool, "demo").await;
         let other = create_project(&pool, "other").await;
         let repo = PostgresDomainRepo::new(pool);
-        repo.create(project, "example.com", &records())
+        repo.create(DomainOwner::Project(project), "example.com", &records())
             .await
             .unwrap();
 
-        assert!(repo.create(other, "EXAMPLE.com", &records()).await.is_err());
+        assert!(
+            repo.create(DomainOwner::Project(other), "EXAMPLE.com", &records())
+                .await
+                .is_err()
+        );
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn shared_domains_are_visible_to_every_project(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let other = create_project(&pool, "other").await;
+        let repo = PostgresDomainRepo::new(pool);
+        let own = repo
+            .create(DomainOwner::Project(project), "own.com", &records())
+            .await
+            .unwrap();
+        let shared = repo
+            .create(DomainOwner::Shared, "shared.com", &records())
+            .await
+            .unwrap();
+        let id = DomainId(shared.id);
+
+        assert_eq!(shared.scope, DomainScope::Shared);
+        assert!(shared.project_id.is_none());
+        assert_eq!(shared.owner(), DomainOwner::Shared);
+        assert_eq!(own.owner(), DomainOwner::Project(project));
+
+        for p in [project, other] {
+            assert!(repo.get(p, id).await.unwrap().is_some());
+            let found = repo.get_by_name(p, "SHARED.com").await.unwrap().unwrap();
+            assert_eq!(found.id, shared.id);
+        }
+
+        let listed: Vec<Uuid> = repo
+            .list(project)
+            .await
+            .unwrap()
+            .iter()
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(listed, vec![own.id, shared.id]);
+        let listed: Vec<Uuid> = repo
+            .list(other)
+            .await
+            .unwrap()
+            .iter()
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(listed, vec![shared.id]);
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn delete_requires_the_owner(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let repo = PostgresDomainRepo::new(pool);
+        let own = DomainId(
+            repo.create(DomainOwner::Project(project), "own.com", &records())
+                .await
+                .unwrap()
+                .id,
+        );
+        let shared = DomainId(
+            repo.create(DomainOwner::Shared, "shared.com", &records())
+                .await
+                .unwrap()
+                .id,
+        );
+
+        assert!(
+            !repo
+                .delete(DomainOwner::Project(project), shared)
+                .await
+                .unwrap()
+        );
+        assert!(!repo.delete(DomainOwner::Shared, own).await.unwrap());
+        assert!(repo.get(project, shared).await.unwrap().is_some());
+        assert!(repo.get(project, own).await.unwrap().is_some());
+
+        assert!(repo.delete(DomainOwner::Shared, shared).await.unwrap());
+        assert!(
+            repo.delete(DomainOwner::Project(project), own)
+                .await
+                .unwrap()
+        );
+        assert!(repo.get(project, shared).await.unwrap().is_none());
+        assert!(repo.get(project, own).await.unwrap().is_none());
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn rejects_duplicate_between_shared_and_project(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let repo = PostgresDomainRepo::new(pool);
+        repo.create(DomainOwner::Shared, "example.com", &records())
+            .await
+            .unwrap();
+
+        assert!(
+            repo.create(DomainOwner::Project(project), "Example.com", &records())
+                .await
+                .is_err()
+        );
+        assert!(
+            repo.create(DomainOwner::Shared, "EXAMPLE.com", &records())
+                .await
+                .is_err()
+        );
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn scope_must_match_project(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let insert = |scope: DomainScope, project_id: Option<Uuid>| {
+            sqlx::query(
+                r"
+            insert into courier.domains (project_id, scope, domain, dns_records)
+            values ($1, $2, 'example.com', '[]')
+            ",
+            )
+            .bind(project_id)
+            .bind(scope)
+            .execute(&pool)
+        };
+
+        assert!(insert(DomainScope::Project, None).await.is_err());
+        assert!(insert(DomainScope::Shared, Some(project.0)).await.is_err());
     }
 }

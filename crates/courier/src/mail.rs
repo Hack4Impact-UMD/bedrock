@@ -178,7 +178,7 @@ impl EmailRepo for PostgresEmailRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domains::{DomainRepo, PostgresDomainRepo};
+    use crate::domains::{DomainOwner, DomainRepo, PostgresDomainRepo};
 
     async fn create_project(pool: &PgPool, slug: &str) -> ProjectId {
         let (id,): (Uuid,) = sqlx::query_as(
@@ -209,9 +209,9 @@ mod tests {
         ApiKeyId(id)
     }
 
-    async fn create_domain(pool: &PgPool, project: ProjectId, name: &str) -> DomainId {
+    async fn create_domain(pool: &PgPool, owner: DomainOwner, name: &str) -> DomainId {
         let domain = PostgresDomainRepo::new(pool.clone())
-            .create(project, name, &[])
+            .create(owner, name, &[])
             .await
             .unwrap();
 
@@ -239,7 +239,7 @@ mod tests {
     async fn create_and_get(pool: PgPool) {
         let project = create_project(&pool, "demo").await;
         let key = create_key(&pool, project, "bdrk_12345678").await;
-        let domain = create_domain(&pool, project, "example.com").await;
+        let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
         let repo = PostgresEmailRepo::new(pool);
         let to = vec!["a@test.com".to_string(), "b@test.com".to_string()];
         let cc = vec!["c@test.com".to_string()];
@@ -327,11 +327,10 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
-    async fn rejects_key_or_domain_from_another_project(pool: PgPool) {
+    async fn rejects_key_from_another_project(pool: PgPool) {
         let project = create_project(&pool, "demo").await;
         let other = create_project(&pool, "other").await;
         let key = create_key(&pool, other, "bdrk_12345678").await;
-        let domain = create_domain(&pool, other, "example.com").await;
         let repo = PostgresEmailRepo::new(pool);
         let to = vec!["a@test.com".to_string()];
 
@@ -340,19 +339,13 @@ mod tests {
             ..email(&to)
         };
         assert!(repo.create(project, &with_key).await.is_err());
-
-        let with_domain = NewEmail {
-            domain: Some(domain),
-            ..email(&to)
-        };
-        assert!(repo.create(project, &with_domain).await.is_err());
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
     async fn deleting_key_or_domain_keeps_email(pool: PgPool) {
         let project = create_project(&pool, "demo").await;
         let key = create_key(&pool, project, "bdrk_12345678").await;
-        let domain = create_domain(&pool, project, "example.com").await;
+        let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
         let repo = PostgresEmailRepo::new(pool.clone());
         let to = vec!["a@test.com".to_string()];
         let id = EmailId(
@@ -376,7 +369,7 @@ mod tests {
             .unwrap();
         assert!(
             PostgresDomainRepo::new(pool.clone())
-                .delete(project, domain)
+                .delete(DomainOwner::Project(project), domain)
                 .await
                 .unwrap()
         );
@@ -385,5 +378,41 @@ mod tests {
         assert_eq!(email.project_id, project.0);
         assert!(email.api_key_id.is_none());
         assert!(email.domain_id.is_none());
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn any_project_can_send_from_a_shared_domain(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let other = create_project(&pool, "other").await;
+        let domain = create_domain(&pool, DomainOwner::Shared, "example.com").await;
+        let repo = PostgresEmailRepo::new(pool.clone());
+        let to = vec!["a@test.com".to_string()];
+
+        let mut ids = Vec::new();
+        for p in [project, other] {
+            let created = repo
+                .create(
+                    p,
+                    &NewEmail {
+                        domain: Some(domain),
+                        ..email(&to)
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(created.domain_id, Some(domain.0));
+            ids.push((p, EmailId(created.id)));
+        }
+
+        assert!(
+            PostgresDomainRepo::new(pool)
+                .delete(DomainOwner::Shared, domain)
+                .await
+                .unwrap()
+        );
+        for (p, id) in ids {
+            let email = repo.get(p, id).await.unwrap().unwrap();
+            assert!(email.domain_id.is_none());
+        }
     }
 }
