@@ -266,7 +266,23 @@ data "aws_iam_policy_document" "deploy" {
       "arn:aws:apigateway:${var.region}::/apis",
       "arn:aws:apigateway:${var.region}::/apis/*",
       "arn:aws:apigateway:${var.region}::/tags/*",
+      # Custom domain names and their API mappings (/domainnames/{name}/apimappings).
+      "arn:aws:apigateway:${var.region}::/domainnames",
+      "arn:aws:apigateway:${var.region}::/domainnames/*",
     ]
+  }
+
+  # Read-only: the app config looks up the (externally validated) API certificate by domain.
+  statement {
+    sid       = "AcmList"
+    actions   = ["acm:ListCertificates"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "AcmRead"
+    actions   = ["acm:DescribeCertificate", "acm:ListTagsForCertificate"]
+    resources = ["arn:aws:acm:${var.region}:${local.account_id}:certificate/*"]
   }
 }
 
