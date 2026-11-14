@@ -36,3 +36,9 @@ variable "database_url" {
   type        = string
   sensitive   = true
 }
+
+variable "api_domain" {
+  description = "Custom domain for the HTTP API. Needs an ISSUED ACM certificate for this exact name in var.region; DNS lives in the h4i dns repo (dnsconfig.js)."
+  type        = string
+  default     = "bedrock.umdh4i.org"
+}
