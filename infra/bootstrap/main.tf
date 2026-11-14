@@ -280,8 +280,9 @@ data "aws_iam_policy_document" "deploy" {
   }
 
   statement {
-    sid       = "AcmRead"
-    actions   = ["acm:DescribeCertificate", "acm:ListTagsForCertificate"]
+    sid = "AcmRead"
+    # GetCertificate returns the public cert + chain (never the private key); the data source reads them.
+    actions   = ["acm:DescribeCertificate", "acm:GetCertificate", "acm:ListTagsForCertificate"]
     resources = ["arn:aws:acm:${var.region}:${local.account_id}:certificate/*"]
   }
 }
@@ -290,4 +291,15 @@ resource "aws_iam_role_policy" "deploy" {
   name   = "deploy"
   role   = aws_iam_role.deploy.id
   policy = data.aws_iam_policy_document.deploy.json
+}
+
+# --- API Gateway service-linked role ------------------------------------------
+
+# API Gateway needs AWSServiceRoleForAPIGateway (one per account) to use ACM
+# certificates on custom domains, and creates it on the first CreateDomainName.
+# Creating it here keeps iam:CreateServiceLinkedRole off the deploy role.
+# If the account already has it: terraform import aws_iam_service_linked_role.apigateway \
+#   arn:aws:iam::<account-id>:role/aws-service-role/ops.apigateway.amazonaws.com/AWSServiceRoleForAPIGateway
+resource "aws_iam_service_linked_role" "apigateway" {
+  aws_service_name = "ops.apigateway.amazonaws.com"
 }
