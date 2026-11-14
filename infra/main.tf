@@ -109,3 +109,29 @@ resource "aws_lambda_permission" "apigw" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*"
 }
+
+# --- Custom domain ------------------------------------------------------------
+
+# The certificate is requested and DNS-validated outside Terraform (validation
+# CNAME is in the dns repo). Lookup only matches ISSUED certificates, so apply
+# fails until validation completes.
+data "aws_acm_certificate" "api" {
+  domain      = var.api_domain
+  most_recent = true
+}
+
+resource "aws_apigatewayv2_domain_name" "api" {
+  domain_name = var.api_domain
+
+  domain_name_configuration {
+    certificate_arn = data.aws_acm_certificate.api.arn
+    endpoint_type   = "REGIONAL"
+    security_policy = "TLS_1_2"
+  }
+}
+
+resource "aws_apigatewayv2_api_mapping" "api" {
+  api_id      = aws_apigatewayv2_api.api.id
+  domain_name = aws_apigatewayv2_domain_name.api.id
+  stage       = aws_apigatewayv2_stage.default.id
+}
