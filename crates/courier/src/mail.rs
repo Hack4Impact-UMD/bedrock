@@ -1,6 +1,6 @@
 use anyhow::Result;
 use db::PgPool;
-use identity::{ApiKeyId, ProjectId};
+use identity::ProjectId;
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 use sqlx::types::chrono::DateTime;
@@ -32,7 +32,6 @@ pub enum EmailStatus {
 pub struct Email {
     pub id: Uuid,
     pub project_id: Uuid,
-    pub api_key_id: Option<Uuid>,
     pub domain_id: Option<Uuid>,
     pub mode: SendMode,
     pub from_address: String,
@@ -48,19 +47,17 @@ pub struct Email {
     pub created_at: DateTime<Utc>,
 }
 
-/// The outcome of a send attempt, recorded once it has been made.
+/// The outcome of a send attempt, used to create its row. The status is `Failed` when `error` is set.
 #[derive(Debug)]
 pub struct NewEmail<'a> {
-    pub api_key: Option<ApiKeyId>,
-    pub domain: Option<DomainId>,
+    pub domain: DomainId,
     pub mode: SendMode,
     pub from_address: &'a str,
     pub to_addresses: &'a [String],
     pub cc_addresses: &'a [String],
     pub bcc_addresses: &'a [String],
     pub subject: &'a str,
-    pub body: Option<&'a str>,
-    pub status: EmailStatus,
+    pub body: &'a str,
     pub provider_message_id: Option<&'a str>,
     pub error: Option<&'a str>,
 }
@@ -71,15 +68,17 @@ pub trait EmailRepo {
         project: ProjectId,
         email: &NewEmail<'_>,
     ) -> impl Future<Output = Result<Email>> + Send;
-    fn get(
-        &self,
-        project: ProjectId,
-        id: EmailId,
-    ) -> impl Future<Output = Result<Option<Email>>> + Send;
+    fn get(&self, id: EmailId) -> impl Future<Output = Result<Option<Email>>> + Send;
     /// Newest first. Pass the last email of a page as `before` to get the next page.
     fn list(
         &self,
         project: ProjectId,
+        limit: i64,
+        before: Option<EmailId>,
+    ) -> impl Future<Output = Result<Vec<Email>>> + Send;
+    fn list_from_domain(
+        &self,
+        domain: DomainId,
         limit: i64,
         before: Option<EmailId>,
     ) -> impl Future<Output = Result<Vec<Email>>> + Send;
@@ -101,16 +100,15 @@ impl EmailRepo for PostgresEmailRepo {
         let email: Email = sqlx::query_as(
             r"
         insert into courier.emails (
-            project_id, api_key_id, domain_id, mode, from_address, to_addresses, cc_addresses,
-            bcc_addresses, subject, body, status, provider_message_id, error
+            project_id, domain_id, mode, from_address, to_addresses, cc_addresses, bcc_addresses,
+            subject, body, status, provider_message_id, error
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         returning *
         ",
         )
         .bind(project.0)
-        .bind(email.api_key.map(|k| k.0))
-        .bind(email.domain.map(|d| d.0))
+        .bind(email.domain.0)
         .bind(email.mode)
         .bind(email.from_address)
         .bind(email.to_addresses)
@@ -118,7 +116,10 @@ impl EmailRepo for PostgresEmailRepo {
         .bind(email.bcc_addresses)
         .bind(email.subject)
         .bind(email.body)
-        .bind(email.status)
+        .bind(match email.error {
+            Some(_) => EmailStatus::Failed,
+            None => EmailStatus::Sent,
+        })
         .bind(email.provider_message_id)
         .bind(email.error)
         .fetch_one(&self.db)
@@ -127,14 +128,13 @@ impl EmailRepo for PostgresEmailRepo {
         Ok(email)
     }
 
-    async fn get(&self, project: ProjectId, id: EmailId) -> Result<Option<Email>> {
+    async fn get(&self, id: EmailId) -> Result<Option<Email>> {
         let email: Option<Email> = sqlx::query_as(
             r"
         select * from courier.emails
-        where project_id = $1 and id = $2
+        where id = $1
         ",
         )
-        .bind(project.0)
         .bind(id.0)
         .fetch_optional(&self.db)
         .await?;
@@ -173,6 +173,36 @@ impl EmailRepo for PostgresEmailRepo {
 
         Ok(emails)
     }
+
+    async fn list_from_domain(
+        &self,
+        domain_id: DomainId,
+        limit: i64,
+        before: Option<EmailId>,
+    ) -> Result<Vec<Email>> {
+        let emails: Vec<Email> = sqlx::query_as(
+            r"
+        select * from courier.emails
+        where domain_id = $1
+          and (
+            $3::uuid is null
+            or (created_at, id) < (
+                select created_at, id from courier.emails
+                where domain_id = $1 and id = $3
+            )
+          )
+        order by created_at desc, id desc
+        limit $2
+        ",
+        )
+        .bind(domain_id.0)
+        .bind(limit)
+        .bind(before.map(|e| e.0))
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(emails)
+    }
 }
 
 #[cfg(test)]
@@ -192,23 +222,6 @@ mod tests {
         ProjectId(id)
     }
 
-    async fn create_key(pool: &PgPool, project: ProjectId, prefix: &str) -> ApiKeyId {
-        let (id,): (Uuid,) = sqlx::query_as(
-            r"
-        insert into identity.api_keys (project_id, name, prefix, hash)
-        values ($1, 'test', $2, $2::bytea)
-        returning id
-        ",
-        )
-        .bind(project.0)
-        .bind(prefix)
-        .fetch_one(pool)
-        .await
-        .unwrap();
-
-        ApiKeyId(id)
-    }
-
     async fn create_domain(pool: &PgPool, owner: DomainOwner, name: &str) -> DomainId {
         let domain = PostgresDomainRepo::new(pool.clone())
             .create(owner, name, &[])
@@ -218,18 +231,16 @@ mod tests {
         DomainId(domain.id)
     }
 
-    fn email<'a>(to: &'a [String]) -> NewEmail<'a> {
+    fn email<'a>(domain: DomainId, to: &'a [String]) -> NewEmail<'a> {
         NewEmail {
-            api_key: None,
-            domain: None,
+            domain,
             mode: SendMode::Live,
             from_address: "hi@example.com",
             to_addresses: to,
             cc_addresses: &[],
             bcc_addresses: &[],
             subject: "Hello",
-            body: Some("Body"),
-            status: EmailStatus::Sent,
+            body: "Body",
             provider_message_id: Some("ses-123"),
             error: None,
         }
@@ -238,7 +249,6 @@ mod tests {
     #[sqlx::test(migrations = "../db/migrations")]
     async fn create_and_get(pool: PgPool) {
         let project = create_project(&pool, "demo").await;
-        let key = create_key(&pool, project, "bdrk_12345678").await;
         let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
         let repo = PostgresEmailRepo::new(pool);
         let to = vec!["a@test.com".to_string(), "b@test.com".to_string()];
@@ -248,21 +258,14 @@ mod tests {
             .create(
                 project,
                 &NewEmail {
-                    api_key: Some(key),
-                    domain: Some(domain),
                     cc_addresses: &cc,
-                    ..email(&to)
+                    ..email(domain, &to)
                 },
             )
             .await
             .unwrap();
 
-        let fetched = repo
-            .get(project, EmailId(created.id))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.api_key_id, Some(key.0));
+        let fetched = repo.get(EmailId(created.id)).await.unwrap().unwrap();
         assert_eq!(fetched.domain_id, Some(domain.0));
         assert_eq!(fetched.mode, SendMode::Live);
         assert_eq!(fetched.status, EmailStatus::Sent);
@@ -271,17 +274,40 @@ mod tests {
         assert!(fetched.bcc_addresses.is_empty());
         assert_eq!(fetched.body.as_deref(), Some("Body"));
         assert_eq!(fetched.provider_message_id.as_deref(), Some("ses-123"));
+        assert!(fetched.error.is_none());
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn error_marks_email_failed(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
+        let repo = PostgresEmailRepo::new(pool);
+        let to = vec!["a@test.com".to_string()];
+
+        let created = repo
+            .create(
+                project,
+                &NewEmail {
+                    error: Some("rejected"),
+                    ..email(domain, &to)
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(created.status, EmailStatus::Failed);
+        assert_eq!(created.error.as_deref(), Some("rejected"));
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
     async fn list_pages_newest_first(pool: PgPool) {
         let project = create_project(&pool, "demo").await;
+        let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
         let repo = PostgresEmailRepo::new(pool);
         let to = vec!["a@test.com".to_string()];
 
-        let mut ids = Vec::new();
         for _ in 0..5 {
-            ids.push(repo.create(project, &email(&to)).await.unwrap().id);
+            repo.create(project, &email(domain, &to)).await.unwrap();
         }
 
         let all: Vec<Uuid> = repo
@@ -313,60 +339,65 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
+    async fn list_from_domain_pages_newest_first(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
+        let other = create_domain(&pool, DomainOwner::Project(project), "other.com").await;
+        let repo = PostgresEmailRepo::new(pool);
+        let to = vec!["a@test.com".to_string()];
+
+        for _ in 0..3 {
+            repo.create(project, &email(domain, &to)).await.unwrap();
+        }
+        let other_id = EmailId(repo.create(project, &email(other, &to)).await.unwrap().id);
+
+        let all: Vec<Uuid> = repo
+            .list_from_domain(domain, 10, None)
+            .await
+            .unwrap()
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(all.len(), 3);
+
+        let first = repo.list_from_domain(domain, 2, None).await.unwrap();
+        let second = repo
+            .list_from_domain(domain, 2, Some(EmailId(first[1].id)))
+            .await
+            .unwrap();
+        let paged: Vec<Uuid> = first.iter().chain(&second).map(|e| e.id).collect();
+        assert_eq!(paged, all);
+
+        // A cursor from another domain matches nothing.
+        assert!(
+            repo.list_from_domain(domain, 10, Some(other_id))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
     async fn emails_are_scoped_to_their_project(pool: PgPool) {
         let project = create_project(&pool, "demo").await;
         let other = create_project(&pool, "other").await;
+        let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
         let repo = PostgresEmailRepo::new(pool);
         let to = vec!["a@test.com".to_string()];
-        let id = EmailId(repo.create(project, &email(&to)).await.unwrap().id);
+        let id = EmailId(repo.create(project, &email(domain, &to)).await.unwrap().id);
 
-        assert!(repo.get(other, id).await.unwrap().is_none());
         assert!(repo.list(other, 10, None).await.unwrap().is_empty());
         assert!(repo.list(other, 10, Some(id)).await.unwrap().is_empty());
-        assert!(repo.get(project, id).await.unwrap().is_some());
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
-    async fn rejects_key_from_another_project(pool: PgPool) {
+    async fn deleting_domain_keeps_email(pool: PgPool) {
         let project = create_project(&pool, "demo").await;
-        let other = create_project(&pool, "other").await;
-        let key = create_key(&pool, other, "bdrk_12345678").await;
-        let repo = PostgresEmailRepo::new(pool);
-        let to = vec!["a@test.com".to_string()];
-
-        let with_key = NewEmail {
-            api_key: Some(key),
-            ..email(&to)
-        };
-        assert!(repo.create(project, &with_key).await.is_err());
-    }
-
-    #[sqlx::test(migrations = "../db/migrations")]
-    async fn deleting_key_or_domain_keeps_email(pool: PgPool) {
-        let project = create_project(&pool, "demo").await;
-        let key = create_key(&pool, project, "bdrk_12345678").await;
         let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
         let repo = PostgresEmailRepo::new(pool.clone());
         let to = vec!["a@test.com".to_string()];
-        let id = EmailId(
-            repo.create(
-                project,
-                &NewEmail {
-                    api_key: Some(key),
-                    domain: Some(domain),
-                    ..email(&to)
-                },
-            )
-            .await
-            .unwrap()
-            .id,
-        );
+        let id = EmailId(repo.create(project, &email(domain, &to)).await.unwrap().id);
 
-        sqlx::query("delete from identity.api_keys where id = $1")
-            .bind(key.0)
-            .execute(&pool)
-            .await
-            .unwrap();
         assert!(
             PostgresDomainRepo::new(pool.clone())
                 .delete(DomainOwner::Project(project), domain)
@@ -374,9 +405,8 @@ mod tests {
                 .unwrap()
         );
 
-        let email = repo.get(project, id).await.unwrap().unwrap();
+        let email = repo.get(id).await.unwrap().unwrap();
         assert_eq!(email.project_id, project.0);
-        assert!(email.api_key_id.is_none());
         assert!(email.domain_id.is_none());
     }
 
@@ -390,18 +420,9 @@ mod tests {
 
         let mut ids = Vec::new();
         for p in [project, other] {
-            let created = repo
-                .create(
-                    p,
-                    &NewEmail {
-                        domain: Some(domain),
-                        ..email(&to)
-                    },
-                )
-                .await
-                .unwrap();
+            let created = repo.create(p, &email(domain, &to)).await.unwrap();
             assert_eq!(created.domain_id, Some(domain.0));
-            ids.push((p, EmailId(created.id)));
+            ids.push(EmailId(created.id));
         }
 
         assert!(
@@ -410,8 +431,8 @@ mod tests {
                 .await
                 .unwrap()
         );
-        for (p, id) in ids {
-            let email = repo.get(p, id).await.unwrap().unwrap();
+        for id in ids {
+            let email = repo.get(id).await.unwrap().unwrap();
             assert!(email.domain_id.is_none());
         }
     }

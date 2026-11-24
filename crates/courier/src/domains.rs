@@ -11,6 +11,12 @@ use uuid::Uuid;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DomainId(pub Uuid);
 
+impl From<Domain> for DomainId {
+    fn from(value: Domain) -> Self {
+        DomainId(value.id)
+    }
+}
+
 #[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[sqlx(type_name = "courier.domain_status", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
@@ -99,17 +105,9 @@ pub trait DomainRepo {
         domain: &str,
         dns_records: &[DnsRecord],
     ) -> impl Future<Output = Result<Domain>> + Send;
-    fn get(
-        &self,
-        project: ProjectId,
-        id: DomainId,
-    ) -> impl Future<Output = Result<Option<Domain>>> + Send;
+    fn get(&self, id: DomainId) -> impl Future<Output = Result<Option<Domain>>> + Send;
     /// Case-insensitive lookup, matching the uniqueness index.
-    fn get_by_name(
-        &self,
-        project: ProjectId,
-        domain: &str,
-    ) -> impl Future<Output = Result<Option<Domain>>> + Send;
+    fn get_by_name(&self, domain: &str) -> impl Future<Output = Result<Option<Domain>>> + Send;
     /// The project's own domains followed by shared ones.
     fn list(&self, project: ProjectId) -> impl Future<Output = Result<Vec<Domain>>> + Send;
     /// Records the result of a verification check.
@@ -121,6 +119,11 @@ pub trait DomainRepo {
     /// Returns whether a domain was deleted.
     fn delete(&self, owner: DomainOwner, id: DomainId)
     -> impl Future<Output = Result<bool>> + Send;
+    fn delete_by_name(
+        &self,
+        owner: DomainOwner,
+        domain: &str,
+    ) -> impl Future<Output = Result<bool>> + Send;
 }
 
 #[derive(Clone)]
@@ -158,14 +161,13 @@ impl DomainRepo for PostgresDomainRepo {
         Ok(domain)
     }
 
-    async fn get(&self, project: ProjectId, id: DomainId) -> Result<Option<Domain>> {
+    async fn get(&self, id: DomainId) -> Result<Option<Domain>> {
         let domain: Option<Domain> = sqlx::query_as(
             r"
         select * from courier.domains
-        where id = $2 and (project_id = $1 or scope = 'shared')
+        where id = $1
         ",
         )
-        .bind(project.0)
         .bind(id.0)
         .fetch_optional(&self.db)
         .await?;
@@ -173,14 +175,13 @@ impl DomainRepo for PostgresDomainRepo {
         Ok(domain)
     }
 
-    async fn get_by_name(&self, project: ProjectId, domain: &str) -> Result<Option<Domain>> {
+    async fn get_by_name(&self, domain: &str) -> Result<Option<Domain>> {
         let domain: Option<Domain> = sqlx::query_as(
             r"
         select * from courier.domains
-        where lower(domain) = lower($2) and (project_id = $1 or scope = 'shared')
+        where lower(domain) = lower($1)
         ",
         )
-        .bind(project.0)
         .bind(domain)
         .fetch_optional(&self.db)
         .await?;
@@ -239,6 +240,22 @@ impl DomainRepo for PostgresDomainRepo {
 
         Ok(result.rows_affected() > 0)
     }
+
+    async fn delete_by_name(&self, owner: DomainOwner, domain: &str) -> Result<bool> {
+        let result = sqlx::query(
+            r"
+        delete from courier.domains
+        where domain = $1 and scope = $2 and project_id is not distinct from $3
+        ",
+        )
+        .bind(domain)
+        .bind(owner.scope())
+        .bind(owner.project_id())
+        .execute(&self.db)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 #[cfg(test)]
@@ -288,7 +305,7 @@ mod tests {
         assert!(created.last_checked_at.is_none());
         assert!(created.verified_at.is_none());
 
-        let fetched = repo.get(project, id).await.unwrap().unwrap();
+        let fetched = repo.get(id).await.unwrap().unwrap();
         assert_eq!(fetched.domain, "example.com");
         assert_eq!(fetched.dns_records.0, records());
         assert_eq!(repo.list(project).await.unwrap().len(), 1);
@@ -298,7 +315,7 @@ mod tests {
                 .await
                 .unwrap()
         );
-        assert!(repo.get(project, id).await.unwrap().is_none());
+        assert!(repo.get(id).await.unwrap().is_none());
         assert!(
             !repo
                 .delete(DomainOwner::Project(project), id)
@@ -322,18 +339,9 @@ mod tests {
             .await
             .unwrap();
 
-        let found = repo
-            .get_by_name(project, "example.COM")
-            .await
-            .unwrap()
-            .unwrap();
+        let found = repo.get_by_name("example.COM").await.unwrap().unwrap();
         assert_eq!(found.id, created.id);
-        assert!(
-            repo.get_by_name(project, "other.com")
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(repo.get_by_name("other.com").await.unwrap().is_none());
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
@@ -405,16 +413,9 @@ mod tests {
                 .id,
         );
 
-        assert!(repo.get(other, id).await.unwrap().is_none());
-        assert!(
-            repo.get_by_name(other, "example.com")
-                .await
-                .unwrap()
-                .is_none()
-        );
         assert!(repo.list(other).await.unwrap().is_empty());
         assert!(!repo.delete(DomainOwner::Project(other), id).await.unwrap());
-        assert!(repo.get(project, id).await.unwrap().is_some());
+        assert!(repo.get(id).await.unwrap().is_some());
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
@@ -453,9 +454,9 @@ mod tests {
         assert_eq!(shared.owner(), DomainOwner::Shared);
         assert_eq!(own.owner(), DomainOwner::Project(project));
 
-        for p in [project, other] {
-            assert!(repo.get(p, id).await.unwrap().is_some());
-            let found = repo.get_by_name(p, "SHARED.com").await.unwrap().unwrap();
+        for _ in [project, other] {
+            assert!(repo.get(id).await.unwrap().is_some());
+            let found = repo.get_by_name("SHARED.com").await.unwrap().unwrap();
             assert_eq!(found.id, shared.id);
         }
 
@@ -501,8 +502,8 @@ mod tests {
                 .unwrap()
         );
         assert!(!repo.delete(DomainOwner::Shared, own).await.unwrap());
-        assert!(repo.get(project, shared).await.unwrap().is_some());
-        assert!(repo.get(project, own).await.unwrap().is_some());
+        assert!(repo.get(shared).await.unwrap().is_some());
+        assert!(repo.get(own).await.unwrap().is_some());
 
         assert!(repo.delete(DomainOwner::Shared, shared).await.unwrap());
         assert!(
@@ -510,8 +511,8 @@ mod tests {
                 .await
                 .unwrap()
         );
-        assert!(repo.get(project, shared).await.unwrap().is_none());
-        assert!(repo.get(project, own).await.unwrap().is_none());
+        assert!(repo.get(shared).await.unwrap().is_none());
+        assert!(repo.get(own).await.unwrap().is_none());
     }
 
     #[sqlx::test(migrations = "../db/migrations")]

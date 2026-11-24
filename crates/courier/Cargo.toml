@@ -13,3 +13,4 @@ serde = {workspace = true}
 chrono = {workspace = true}
 thiserror = {workspace = true}
 aws-sdk-sesv2.workspace = true
+email_address.workspace = true

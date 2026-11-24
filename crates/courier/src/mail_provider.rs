@@ -80,34 +80,6 @@ pub trait MailProvider {
     ) -> impl Future<Output = Result<DomainCheck, ProviderError>> + Send;
 }
 
-#[derive(Default)]
-pub struct MockMailProvider {}
-
-impl MailProvider for MockMailProvider {
-    async fn send_email(&self, _: &OutgoingEmail<'_>) -> Result<MessageId, ProviderError> {
-        Ok(MessageId(Uuid::new_v4().to_string()))
-    }
-
-    async fn create_identity(&self, domain: &str) -> Result<Vec<DnsRecord>, ProviderError> {
-        Ok(vec![DnsRecord {
-            record_type: String::from("test"),
-            name: String::from("test"),
-            value: domain.to_string(),
-        }])
-    }
-
-    async fn delete_identity(&self, _: &str) -> Result<(), ProviderError> {
-        Ok(())
-    }
-
-    async fn check_identity(&self, _: &str) -> Result<DomainCheck, ProviderError> {
-        Ok(DomainCheck {
-            status: DomainStatus::Verified,
-            mail_from_status: DomainStatus::Verified,
-        })
-    }
-}
-
 pub struct SesMailProvider {
     client: aws_sdk_sesv2::Client,
 }
