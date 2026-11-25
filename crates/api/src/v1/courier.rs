@@ -1,8 +1,7 @@
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{get, post},
 };
 use courier::{
     CourierError, Domain, DomainCheck, DomainOwner, Email, EmailId, OutgoingEmail, SendMode,
@@ -10,14 +9,24 @@ use courier::{
 use email_address::EmailAddress;
 use identity::ProjectId;
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
+use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
-use crate::{AppState, error::ApiError, middleware::AuthContext};
+use crate::{
+    AppState,
+    error::{ApiError, ErrorBody},
+    middleware::AuthContext,
+};
+
+const TAG: &str = "courier";
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 100;
 
-#[derive(Deserialize, Debug)]
+/// Email body content. Supply HTML, plain text, or both. When only HTML is supplied, plaintext is
+/// rendered automatically with pter
+#[derive(Deserialize, Debug, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum EmailBody {
     Html(String),
@@ -25,8 +34,9 @@ enum EmailBody {
     Both { html: String, text: String },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SendRequest {
+    /// Sender address. Its domain must be one the project can send from.
     pub from: String,
     pub to: Vec<String>,
     #[serde(default)]
@@ -35,18 +45,22 @@ struct SendRequest {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body: EmailBody,
+    /// Defaults to `live`. Use `test` to record the email without actually delivering it.
     #[serde(default)]
     pub mode: Option<SendMode>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateDomainRequest {
     pub domain: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct Page {
+    /// Page size, from 1 to 100. Defaults to 50.
     pub limit: Option<i64>,
+    /// Return emails older than the email with this id.
     pub before: Option<Uuid>,
 }
 
@@ -68,6 +82,19 @@ fn visible_to(domain: &Domain, project: ProjectId) -> bool {
     domain.owner() == DomainOwner::Shared || owned_by(domain, project)
 }
 
+/// List the domains this project can send from.
+/// The domains the project directly owns will be listed first
+/// followed by shared domains.
+#[utoipa::path(
+    get,
+    path = "/domains",
+    tag = TAG,
+    security(("api_key" = [])),
+    responses(
+        (status = 200, body = Vec<Domain>),
+        (status = 401, body = ErrorBody),
+    ),
+)]
 async fn get_domains(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -80,6 +107,22 @@ async fn get_domains(
     Ok(Json(domains))
 }
 
+/// Register a sending domain for this project.
+///
+/// The response includes the DNS records to publish before the domain can be verified.
+#[utoipa::path(
+    post,
+    path = "/domains",
+    tag = TAG,
+    security(("api_key" = [])),
+    request_body = CreateDomainRequest,
+    responses(
+        (status = 201, body = Domain),
+        (status = 401, body = ErrorBody),
+        (status = 409, description = "Domain already registered", body = ErrorBody),
+        (status = 422, description = "Invalid domain", body = ErrorBody),
+    ),
+)]
 async fn create_domain(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -93,6 +136,19 @@ async fn create_domain(
     Ok((StatusCode::CREATED, Json(domain)))
 }
 
+/// Get details for a domain. The domain must either be shared or owned by the project.
+#[utoipa::path(
+    get,
+    path = "/domains/{domain}",
+    tag = TAG,
+    security(("api_key" = [])),
+    params(("domain" = String, Path, description = "Domain name, e.g. `mail.example.org`")),
+    responses(
+        (status = 200, body = Domain),
+        (status = 401, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+)]
 async fn get_domain(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -106,6 +162,19 @@ async fn get_domain(
     Ok(Json(domain))
 }
 
+/// Check a domain's verification status with the mail provider.
+#[utoipa::path(
+    get,
+    path = "/domains/{domain}/check",
+    tag = TAG,
+    security(("api_key" = [])),
+    params(("domain" = String, Path, description = "Domain name, e.g. `mail.example.org`")),
+    responses(
+        (status = 200, body = DomainCheck),
+        (status = 401, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+)]
 async fn check_domain(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -120,6 +189,19 @@ async fn check_domain(
     Ok(Json(check))
 }
 
+/// Delete a domain owned by this project.
+#[utoipa::path(
+    delete,
+    path = "/domains/{domain}",
+    tag = TAG,
+    security(("api_key" = [])),
+    params(("domain" = String, Path, description = "Domain name, e.g. `mail.example.org`")),
+    responses(
+        (status = 204, description = "Domain deleted"),
+        (status = 401, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+)]
 async fn delete_domain(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -142,6 +224,19 @@ async fn delete_domain(
     }
 }
 
+/// List emails sent from a domain owned by this project, newest first.
+#[utoipa::path(
+    get,
+    path = "/domains/{domain}/mail",
+    tag = TAG,
+    security(("api_key" = [])),
+    params(("domain" = String, Path, description = "Domain name, e.g. `mail.example.org`"), Page),
+    responses(
+        (status = 200, body = Vec<Email>),
+        (status = 401, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+)]
 async fn list_domain_mail(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -161,6 +256,18 @@ async fn list_domain_mail(
     Ok(Json(emails))
 }
 
+/// List emails sent by this project, newest first.
+#[utoipa::path(
+    get,
+    path = "/mail",
+    tag = TAG,
+    security(("api_key" = [])),
+    params(Page),
+    responses(
+        (status = 200, body = Vec<Email>),
+        (status = 401, body = ErrorBody),
+    ),
+)]
 async fn list_mail(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -174,6 +281,19 @@ async fn list_mail(
     Ok(Json(emails))
 }
 
+/// Get details for an email sent by this project.
+#[utoipa::path(
+    get,
+    path = "/mail/{id}",
+    tag = TAG,
+    security(("api_key" = [])),
+    params(("id" = Uuid, Path, description = "Email id")),
+    responses(
+        (status = 200, body = Email),
+        (status = 401, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+)]
 async fn get_mail(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -187,6 +307,23 @@ async fn get_mail(
     Ok(Json(email))
 }
 
+/// Send an email.
+///
+/// Returns the recorded email; check its `status` to see whether the provider accepted it.
+#[utoipa::path(
+    post,
+    path = "/mail/send",
+    tag = TAG,
+    security(("api_key" = [])),
+    request_body = SendRequest,
+    responses(
+        (status = 200, body = Email),
+        (status = 400, description = "Invalid address", body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 404, description = "Sender domain not found", body = ErrorBody),
+        (status = 422, description = "Rejected by the mail provider", body = ErrorBody),
+    ),
+)]
 async fn send_mail(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -226,13 +363,13 @@ async fn send_mail(
     Ok(Json(email))
 }
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/domains", get(get_domains).post(create_domain))
-        .route("/domains/{domain}", get(get_domain).delete(delete_domain))
-        .route("/domains/{domain}/check", get(check_domain))
-        .route("/domains/{domain}/mail", get(list_domain_mail))
-        .route("/mail", get(list_mail))
-        .route("/mail/send", post(send_mail))
-        .route("/mail/{id}", get(get_mail))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(get_domains, create_domain))
+        .routes(routes!(get_domain, delete_domain))
+        .routes(routes!(check_domain))
+        .routes(routes!(list_domain_mail))
+        .routes(routes!(list_mail))
+        .routes(routes!(send_mail))
+        .routes(routes!(get_mail))
 }
