@@ -107,12 +107,14 @@ impl MailProvider for SesMailProvider {
         };
 
         let mut body = Body::builder();
-        if let Some(html) = mail.body.html() {
-            body = body.html(content(html)?);
-        }
-        if let Some(text) = mail.body.text() {
-            body = body.text(content(text)?);
-        }
+
+        body = match &mail.body {
+            EmailBody::Html(html) => body
+                .html(content(html)?)
+                .text(content(&pter::convert(html))?),
+            EmailBody::Text(text) => body.text(content(text)?),
+            EmailBody::Both { html, text } => body.html(content(html)?).text(content(text)?),
+        };
 
         let message = Message::builder()
             .subject(content(mail.subject)?)
