@@ -343,4 +343,159 @@ mod tests {
             ]
         );
     }
+
+    mod emulator {
+        use super::*;
+
+        fn domain() -> String {
+            format!("{}.example.com", Uuid::new_v4())
+        }
+
+        async fn provider() -> Option<SesMailProvider> {
+            if std::env::var_os("AWS_ENDPOINT_URL").is_none() {
+                assert!(
+                    std::env::var_os("CI").is_none(),
+                    "AWS_ENDPOINT_URL must point at the AWS emulator in CI"
+                );
+                eprintln!("skipping: AWS_ENDPOINT_URL is not set");
+                return None;
+            }
+            let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                .load()
+                .await;
+            Some(SesMailProvider::new(aws_sdk_sesv2::Client::new(&config)))
+        }
+
+        #[tokio::test]
+        async fn create_identity_returns_dkim_mail_from_and_dmarc_records() {
+            let Some(ses) = provider().await else { return };
+            let domain = domain();
+
+            let records = ses.create_identity(&domain).await.unwrap();
+
+            let dkim: Vec<_> = records
+                .iter()
+                .filter(|r| r.record_type == "CNAME")
+                .collect();
+            assert_eq!(
+                dkim.len(),
+                3,
+                "SES Easy DKIM issues three tokens: {records:?}"
+            );
+            for r in dkim {
+                let token = r
+                    .name
+                    .strip_suffix(&format!("._domainkey.{domain}"))
+                    .unwrap();
+                assert!(!token.is_empty());
+                assert!(r.value.starts_with(&format!("{token}.")), "{r:?}");
+            }
+
+            let rest: Vec<_> = records
+                .iter()
+                .filter(|r| r.record_type != "CNAME")
+                .map(|r| (r.record_type.clone(), r.name.clone(), r.value.clone()))
+                .collect();
+            let s = String::from;
+            assert_eq!(
+                rest,
+                [
+                    (
+                        s("MX"),
+                        format!("bounce.{domain}"),
+                        s("10 feedback-smtp.us-east-1.amazonses.com")
+                    ),
+                    (
+                        s("TXT"),
+                        format!("bounce.{domain}"),
+                        s("v=spf1 include:amazonses.com ~all")
+                    ),
+                    (s("TXT"), format!("_dmarc.{domain}"), s("v=DMARC1; p=none;")),
+                ]
+            );
+        }
+
+        #[tokio::test]
+        async fn create_identity_twice_is_already_exists() {
+            let Some(ses) = provider().await else { return };
+            let domain = domain();
+
+            ses.create_identity(&domain).await.unwrap();
+            let err = ses.create_identity(&domain).await.unwrap_err();
+
+            assert!(matches!(err, ProviderError::AlreadyExists), "{err:?}");
+        }
+
+        #[tokio::test]
+        async fn new_identity_is_pending() {
+            let Some(ses) = provider().await else { return };
+            let domain = domain();
+
+            ses.create_identity(&domain).await.unwrap();
+            let check = ses.check_identity(&domain).await.unwrap();
+
+            assert_eq!(check.status, DomainStatus::Pending);
+            assert_eq!(check.mail_from_status, DomainStatus::Pending);
+        }
+
+        #[tokio::test]
+        async fn check_unknown_identity_is_not_found() {
+            let Some(ses) = provider().await else { return };
+
+            let err = ses.check_identity(&domain()).await.unwrap_err();
+
+            assert!(matches!(err, ProviderError::NotFound), "{err:?}");
+        }
+
+        #[tokio::test]
+        async fn delete_identity_removes_it() {
+            let Some(ses) = provider().await else { return };
+            let domain = domain();
+            ses.create_identity(&domain).await.unwrap();
+
+            ses.delete_identity(&domain).await.unwrap();
+
+            let err = ses.check_identity(&domain).await.unwrap_err();
+            assert!(matches!(err, ProviderError::NotFound), "{err:?}");
+            // The domain can be registered again once deleted.
+            ses.create_identity(&domain).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn delete_unknown_identity_is_not_found() {
+            let Some(ses) = provider().await else { return };
+
+            let err = ses.delete_identity(&domain()).await.unwrap_err();
+
+            assert!(matches!(err, ProviderError::NotFound), "{err:?}");
+        }
+
+        #[tokio::test]
+        async fn send_from_unverified_identity_is_rejected() {
+            let Some(ses) = provider().await else { return };
+            let domain = domain();
+            ses.create_identity(&domain).await.unwrap();
+            let from = format!("noreply@{domain}");
+            let to = [String::from("someone@example.org")];
+            let mail = OutgoingEmail {
+                from: &from,
+                to: &to,
+                cc: &[],
+                bcc: &[],
+                subject: "hello",
+                body: EmailBody::Both {
+                    html: "<p>hi</p>",
+                    text: "hi",
+                },
+            };
+
+            let err = ses
+                .send_email(&mail)
+                .await
+                .err()
+                .expect("SES must reject mail from an unverified identity");
+
+            assert!(matches!(err, ProviderError::Rejected(_)), "{err:?}");
+        }
+    }
 }

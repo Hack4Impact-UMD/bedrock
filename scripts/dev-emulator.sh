@@ -104,6 +104,7 @@ SYSTEM_CA=""
 for f in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
   [[ -f "$f" ]] && SYSTEM_CA="$f" && break
 done
+mkdir -p target
 COMBINED_CA="target/aws-emulator-ca-bundle.pem"
 if [[ -n "$SYSTEM_CA" ]]; then
   cat "$SYSTEM_CA" "${EMU_DIR}/ca.pem" >"$COMBINED_CA"
