@@ -5,6 +5,7 @@ use email_address::EmailAddress;
 use identity::ProjectId;
 
 use crate::{
+    DomainId,
     courier::CourierError::NotFound,
     domains::{Domain, DomainCheck, DomainOwner, DomainRepo, PostgresDomainRepo},
     mail::{Email, EmailId, EmailRepo, NewEmail, PostgresEmailRepo, SendMode},
@@ -53,7 +54,13 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         domain: &str,
     ) -> Result<Domain, CourierError> {
         let records = self.ses_provider.create_identity(domain).await?;
-        Ok(self.domains.create(owner, domain, &records).await?)
+        match self.domains.create(owner, domain, &records).await {
+            Ok(domain) => Ok(domain),
+            Err(err) => {
+                self.ses_provider.delete_identity(domain).await?;
+                Err(CourierError::Internal(err))
+            }
+        }
     }
 
     pub async fn get_sender_identity(&self, domain: &str) -> Result<Domain, CourierError> {
@@ -84,8 +91,12 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         owner: DomainOwner,
         domain: &str,
     ) -> Result<bool, CourierError> {
-        self.ses_provider.delete_identity(domain).await?;
-        Ok(self.domains.delete_by_name(owner, domain).await?)
+        match self.ses_provider.delete_identity(domain).await {
+            Ok(_) | Err(ProviderError::NotFound) => {
+                Ok(self.domains.delete_by_name(owner, domain).await?)
+            }
+            Err(err) => Err(CourierError::Provider(err)),
+        }
     }
 
     pub async fn get_email(&self, id: EmailId) -> Result<Email, CourierError> {
@@ -116,6 +127,18 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         Ok(self
             .email
             .list_from_domain(domain.into(), limit, before)
+            .await?)
+    }
+
+    pub async fn list_email_from_domain_id(
+        &self,
+        domain_id: DomainId,
+        limit: i64,
+        before: Option<EmailId>,
+    ) -> Result<Vec<Email>, CourierError> {
+        Ok(self
+            .email
+            .list_from_domain(domain_id, limit, before)
             .await?)
     }
 
@@ -153,7 +176,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
             body: match mail.body {
                 crate::mail_provider::EmailBody::Text(t) => t,
                 crate::mail_provider::EmailBody::Html(h) => h,
-                crate::mail_provider::EmailBody::Both { html: _, text } => text,
+                crate::mail_provider::EmailBody::Both { html, text: _ } => html,
             },
             provider_message_id: id.as_deref(),
             error: error.as_deref(),

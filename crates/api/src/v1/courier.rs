@@ -35,7 +35,6 @@ struct SendRequest {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body: EmailBody,
-    /// Defaults to live; `test` records the email without sending it.
     #[serde(default)]
     pub mode: Option<SendMode>,
 }
@@ -156,7 +155,7 @@ async fn list_domain_mail(
 
     let emails = state
         .courier
-        .list_email_from_domain(&domain.domain, page.limit(), page.before())
+        .list_email_from_domain_id(domain.into(), page.limit(), page.before())
         .await?;
 
     Ok(Json(emails))

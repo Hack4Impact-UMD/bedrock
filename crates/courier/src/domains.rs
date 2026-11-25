@@ -153,7 +153,7 @@ impl DomainRepo for PostgresDomainRepo {
         )
         .bind(owner.project_id())
         .bind(owner.scope())
-        .bind(domain)
+        .bind(domain.to_lowercase())
         .bind(Json(dns_records))
         .fetch_one(&self.db)
         .await?;
@@ -245,7 +245,7 @@ impl DomainRepo for PostgresDomainRepo {
         let result = sqlx::query(
             r"
         delete from courier.domains
-        where domain = $1 and scope = $2 and project_id is not distinct from $3
+        where lower(domain) = lower($1) and scope = $2 and project_id is not distinct from $3
         ",
         )
         .bind(domain)

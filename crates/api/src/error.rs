@@ -36,11 +36,14 @@ impl ApiError {
             },
             ApiError::Courier(err) => match err {
                 CourierError::InvalidAddress(_) => StatusCode::BAD_REQUEST,
-                CourierError::Provider(_) | CourierError::Internal(_) => {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                }
+                CourierError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 CourierError::NotFound => StatusCode::NOT_FOUND,
                 CourierError::Taken => StatusCode::BAD_REQUEST,
+                CourierError::Provider(provider_error) => match provider_error {
+                    courier::ProviderError::AlreadyExists => StatusCode::BAD_REQUEST,
+                    courier::ProviderError::NotFound => StatusCode::NOT_FOUND,
+                    _ => StatusCode::INTERNAL_SERVER_ERROR,
+                },
             },
         }
     }

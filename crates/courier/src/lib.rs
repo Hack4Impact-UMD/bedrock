@@ -13,5 +13,6 @@ pub use mail::SendMode;
 pub use mail::{Email, EmailId};
 pub use mail_provider::EmailBody;
 pub use mail_provider::OutgoingEmail;
+pub use mail_provider::ProviderError;
 
 pub type PgCourierService = Courier<domains::PostgresDomainRepo, mail::PostgresEmailRepo>;

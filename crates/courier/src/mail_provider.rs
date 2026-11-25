@@ -1,6 +1,8 @@
 use crate::domains::{DnsRecord, DomainCheck, DomainStatus};
 use aws_sdk_sesv2::error::{DisplayErrorContext, ProvideErrorMetadata};
-use aws_sdk_sesv2::operation::create_email_identity::CreateEmailIdentityError;
+use aws_sdk_sesv2::operation::create_email_identity::{
+    CreateEmailIdentityError, CreateEmailIdentityOutput,
+};
 use aws_sdk_sesv2::operation::delete_email_identity::DeleteEmailIdentityError;
 use aws_sdk_sesv2::operation::get_email_identity::GetEmailIdentityError;
 use aws_sdk_sesv2::operation::send_email::SendEmailError;
@@ -144,6 +146,13 @@ impl MailProvider for SesMailProvider {
     }
 
     async fn create_identity(&self, domain: &str) -> Result<Vec<DnsRecord>, ProviderError> {
+        let region = self
+            .client
+            .config()
+            .region()
+            .ok_or_else(|| anyhow::anyhow!("SES client has no region configured"))?
+            .to_string();
+
         let result = self
             .client
             .create_email_identity()
@@ -160,28 +169,16 @@ impl MailProvider for SesMailProvider {
                 _ => other(err),
             })?;
 
-        let dkim = result
-            .dkim_attributes()
-            .filter(|dkim| !dkim.tokens().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("SES returned no DKIM tokens for {domain}"))?;
-        let zone = dkim.signing_hosted_zone().unwrap_or("dkim.amazonses.com");
-
-        self.client
-            .put_email_identity_mail_from_attributes()
-            .email_identity(domain)
-            .mail_from_domain(mail_from_domain(domain))
-            .behavior_on_mx_failure(BehaviorOnMxFailure::UseDefaultValue)
-            .send()
-            .await
-            .map_err(other)?;
-
-        let region = self
-            .client
-            .config()
-            .region()
-            .ok_or_else(|| anyhow::anyhow!("SES client has no region configured"))?;
-
-        Ok(dns_records(domain, dkim.tokens(), zone, region.as_ref()))
+        match self.configure_identity(domain, &result, &region).await {
+            Ok(records) => Ok(records),
+            Err(err) => match self.delete_identity(domain).await {
+                Ok(()) | Err(ProviderError::NotFound) => Err(err),
+                Err(cleanup) => Err(anyhow::anyhow!(
+                    "{err}; rolling back SES identity {domain} also failed: {cleanup}"
+                )
+                .into()),
+            },
+        }
     }
 
     async fn delete_identity(&self, domain: &str) -> Result<(), ProviderError> {
@@ -247,6 +244,32 @@ impl MailProvider for SesMailProvider {
             status,
             mail_from_status,
         })
+    }
+}
+
+impl SesMailProvider {
+    async fn configure_identity(
+        &self,
+        domain: &str,
+        created: &CreateEmailIdentityOutput,
+        region: &str,
+    ) -> Result<Vec<DnsRecord>, ProviderError> {
+        let dkim = created
+            .dkim_attributes()
+            .filter(|dkim| !dkim.tokens().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("SES returned no DKIM tokens for {domain}"))?;
+        let zone = dkim.signing_hosted_zone().unwrap_or("dkim.amazonses.com");
+
+        self.client
+            .put_email_identity_mail_from_attributes()
+            .email_identity(domain)
+            .mail_from_domain(mail_from_domain(domain))
+            .behavior_on_mx_failure(BehaviorOnMxFailure::UseDefaultValue)
+            .send()
+            .await
+            .map_err(other)?;
+
+        Ok(dns_records(domain, dkim.tokens(), zone, region))
     }
 }
 
