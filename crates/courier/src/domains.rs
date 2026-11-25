@@ -59,7 +59,7 @@ impl DomainOwner {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct DomainCheck {
     // verification status
     pub status: DomainStatus,

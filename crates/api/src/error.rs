@@ -2,15 +2,23 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use courier::CourierError;
 use identity::IdentityError;
 
 pub enum ApiError {
     Identity(IdentityError),
+    Courier(CourierError),
 }
 
 impl From<IdentityError> for ApiError {
     fn from(err: IdentityError) -> Self {
         Self::Identity(err)
+    }
+}
+
+impl From<CourierError> for ApiError {
+    fn from(err: CourierError) -> Self {
+        Self::Courier(err)
     }
 }
 
@@ -25,6 +33,14 @@ impl ApiError {
                 IdentityError::SlugTaken => StatusCode::CONFLICT,
                 IdentityError::InvalidSlug => StatusCode::UNPROCESSABLE_ENTITY,
                 IdentityError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            },
+            ApiError::Courier(err) => match err {
+                CourierError::InvalidAddress(_) => StatusCode::BAD_REQUEST,
+                CourierError::Provider(_) | CourierError::Internal(_) => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+                CourierError::NotFound => StatusCode::NOT_FOUND,
+                CourierError::Taken => StatusCode::BAD_REQUEST,
             },
         }
     }

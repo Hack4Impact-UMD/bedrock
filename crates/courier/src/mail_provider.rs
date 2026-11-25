@@ -80,6 +80,7 @@ pub trait MailProvider {
     ) -> impl Future<Output = Result<DomainCheck, ProviderError>> + Send;
 }
 
+#[derive(Clone)]
 pub struct SesMailProvider {
     client: aws_sdk_sesv2::Client,
 }

@@ -1,4 +1,5 @@
 use axum::{Json, Router, routing::get};
+use courier::PgCourierService;
 use identity::PgIdentityService;
 use serde::Serialize;
 mod error;
@@ -8,6 +9,7 @@ mod v1;
 #[derive(Clone)]
 pub struct AppState {
     pub identity: PgIdentityService,
+    pub courier: PgCourierService,
 }
 
 #[derive(Serialize)]

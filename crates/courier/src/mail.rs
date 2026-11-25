@@ -12,10 +12,11 @@ use crate::domains::DomainId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EmailId(pub Uuid);
 
-#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[sqlx(type_name = "courier.send_mode", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum SendMode {
+    #[default]
     Live,
     Test,
 }

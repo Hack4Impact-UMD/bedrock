@@ -1,15 +1,17 @@
 use std::str::FromStr;
 
+use db::PgPool;
 use email_address::EmailAddress;
 use identity::ProjectId;
 
 use crate::{
     courier::CourierError::NotFound,
-    domains::{Domain, DomainCheck, DomainId, DomainOwner, DomainRepo},
-    mail::{Email, EmailId, EmailRepo, EmailStatus, NewEmail, SendMode},
+    domains::{Domain, DomainCheck, DomainId, DomainOwner, DomainRepo, PostgresDomainRepo},
+    mail::{Email, EmailId, EmailRepo, EmailStatus, NewEmail, PostgresEmailRepo, SendMode},
     mail_provider::{MailProvider, MessageId, OutgoingEmail, ProviderError, SesMailProvider},
 };
 
+#[derive(Clone)]
 pub struct Courier<D: DomainRepo, M: EmailRepo> {
     domains: D,
     email: M,
@@ -30,8 +32,18 @@ pub enum CourierError {
     Internal(#[from] anyhow::Error),
 }
 
-fn mock_message() -> MessageId {
+fn test_message() -> MessageId {
     MessageId(uuid::Uuid::new_v4().to_string())
+}
+
+impl Courier<PostgresDomainRepo, PostgresEmailRepo> {
+    pub fn postgres(pool: PgPool, aws_client: aws_sdk_sesv2::Client) -> Self {
+        Self {
+            domains: PostgresDomainRepo::new(pool.clone()),
+            email: PostgresEmailRepo::new(pool),
+            ses_provider: SesMailProvider::new(aws_client),
+        }
+    }
 }
 
 impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
@@ -44,11 +56,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         Ok(self.domains.create(owner, domain, &records).await?)
     }
 
-    pub async fn get_sender_identity(
-        self,
-        project_id: ProjectId,
-        domain: &str,
-    ) -> Result<Domain, CourierError> {
+    pub async fn get_sender_identity(&self, domain: &str) -> Result<Domain, CourierError> {
         Ok(self
             .domains
             .get_by_name(domain)
@@ -64,7 +72,12 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
     }
 
     pub async fn check_domain_status(&self, domain: &str) -> Result<DomainCheck, CourierError> {
-        Ok(self.ses_provider.check_identity(domain).await?)
+        let d = self.get_sender_identity(domain).await?;
+        let status = self.ses_provider.check_identity(domain).await?;
+
+        self.domains.record_check(d.into(), status).await?;
+
+        Ok(status)
     }
 
     pub async fn delete_sender_identity(
@@ -122,7 +135,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
 
         let mail_id = match mode {
             SendMode::Live => self.ses_provider.send_email(mail).await,
-            SendMode::Test => Ok(mock_message()),
+            SendMode::Test => Ok(test_message()),
         };
 
         let (id, error) = match mail_id {
