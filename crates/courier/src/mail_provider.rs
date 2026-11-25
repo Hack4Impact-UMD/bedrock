@@ -8,7 +8,7 @@ use aws_sdk_sesv2::types::{
     BehaviorOnMxFailure, Body, Content, Destination, EmailContent, MailFromDomainStatus, Message,
     VerificationStatus,
 };
-use uuid::{self, Uuid};
+use uuid::{self};
 
 const MAIL_FROM_SUBDOMAIN: &str = "bounce";
 

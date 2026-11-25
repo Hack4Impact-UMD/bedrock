@@ -6,8 +6,8 @@ use identity::ProjectId;
 
 use crate::{
     courier::CourierError::NotFound,
-    domains::{Domain, DomainCheck, DomainId, DomainOwner, DomainRepo, PostgresDomainRepo},
-    mail::{Email, EmailId, EmailRepo, EmailStatus, NewEmail, PostgresEmailRepo, SendMode},
+    domains::{Domain, DomainCheck, DomainOwner, DomainRepo, PostgresDomainRepo},
+    mail::{Email, EmailId, EmailRepo, NewEmail, PostgresEmailRepo, SendMode},
     mail_provider::{MailProvider, MessageId, OutgoingEmail, ProviderError, SesMailProvider},
 };
 
@@ -161,5 +161,291 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         };
 
         Ok(self.email.create(project_id, &mail).await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{domains::DomainStatus, mail::EmailStatus, mail_provider::EmailBody};
+    use uuid::Uuid;
+
+    type PgCourier = Courier<PostgresDomainRepo, PostgresEmailRepo>;
+
+    async fn courier(pool: PgPool) -> Option<PgCourier> {
+        if std::env::var_os("AWS_ENDPOINT_URL").is_none() {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "AWS_ENDPOINT_URL must point at the AWS emulator in CI"
+            );
+            eprintln!("skipping: AWS_ENDPOINT_URL is not set");
+            return None;
+        }
+        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .load()
+            .await;
+        Some(Courier::postgres(pool, aws_sdk_sesv2::Client::new(&config)))
+    }
+
+    async fn create_project(pool: &PgPool, slug: &str) -> ProjectId {
+        let (id,): (Uuid,) = sqlx::query_as(
+            "insert into identity.projects (slug, name) values ($1, 'Demo') returning id",
+        )
+        .bind(slug)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+        ProjectId(id)
+    }
+
+    fn domain() -> String {
+        format!("{}.example.com", Uuid::new_v4())
+    }
+
+    fn mail<'a>(from: &'a str, to: &'a [String]) -> OutgoingEmail<'a> {
+        OutgoingEmail {
+            from,
+            to,
+            cc: &[],
+            bcc: &[],
+            subject: "hello",
+            body: EmailBody::Both {
+                html: "<p>hi</p>",
+                text: "hi",
+            },
+        }
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn create_sender_identity_registers_with_ses_and_stores_it(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let name = domain();
+
+        let created = courier
+            .create_sender_identity(DomainOwner::Project(project), &name)
+            .await
+            .unwrap();
+
+        assert_eq!(created.domain, name);
+        assert_eq!(created.owner(), DomainOwner::Project(project));
+        assert_eq!(created.status, DomainStatus::Pending);
+        assert!(!created.dns_records.is_empty());
+
+        let fetched = courier.get_sender_identity(&name).await.unwrap();
+        assert_eq!(fetched.id, created.id);
+
+        let listed = courier
+            .get_sender_identities_for_project(project)
+            .await
+            .unwrap();
+        assert!(listed.iter().any(|d| d.id == created.id));
+
+        let check = courier.ses_provider.check_identity(&name).await.unwrap();
+        assert_eq!(check.status, DomainStatus::Pending);
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn create_existing_sender_identity_fails(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let name = domain();
+        courier
+            .create_sender_identity(DomainOwner::Project(project), &name)
+            .await
+            .unwrap();
+
+        let result = courier
+            .create_sender_identity(DomainOwner::Project(project), &name)
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn get_unknown_sender_identity_is_not_found(pool: PgPool) {
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+
+        let err = courier.get_sender_identity(&domain()).await.unwrap_err();
+
+        assert!(matches!(err, CourierError::NotFound), "{err:?}");
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn check_domain_status_records_the_check(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let name = domain();
+        let created = courier
+            .create_sender_identity(DomainOwner::Project(project), &name)
+            .await
+            .unwrap();
+        assert!(created.last_checked_at.is_none());
+
+        let check = courier.check_domain_status(&name).await.unwrap();
+
+        assert_eq!(check.status, DomainStatus::Pending);
+        assert_eq!(check.mail_from_status, DomainStatus::Pending);
+        let fetched = courier.get_sender_identity(&name).await.unwrap();
+        assert!(fetched.last_checked_at.is_some());
+        assert!(fetched.verified_at.is_none());
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn delete_sender_identity_removes_it_from_ses_and_db(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let name = domain();
+        courier
+            .create_sender_identity(DomainOwner::Project(project), &name)
+            .await
+            .unwrap();
+
+        let deleted = courier
+            .delete_sender_identity(DomainOwner::Project(project), &name)
+            .await
+            .unwrap();
+
+        assert!(deleted);
+        let err = courier.get_sender_identity(&name).await.unwrap_err();
+        assert!(matches!(err, CourierError::NotFound), "{err:?}");
+        let err = courier
+            .ses_provider
+            .check_identity(&name)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::NotFound), "{err:?}");
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn send_test_email_records_it_without_ses(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let name = domain();
+        let created = courier
+            .create_sender_identity(DomainOwner::Project(project), &name)
+            .await
+            .unwrap();
+        let from = format!("noreply@{name}");
+        let to = [String::from("someone@example.org")];
+
+        // The identity is unverified, so this only succeeds if SES is skipped.
+        let sent = courier
+            .send_email(project, &mail(&from, &to), SendMode::Test)
+            .await
+            .unwrap();
+
+        assert_eq!(sent.status, EmailStatus::Sent);
+        assert_eq!(sent.mode, SendMode::Test);
+        assert_eq!(sent.project_id, project.0);
+        assert_eq!(sent.domain_id, Some(created.id));
+        assert_eq!(sent.from_address, from);
+        assert_eq!(sent.to_addresses, to);
+        assert!(sent.provider_message_id.is_some());
+        assert!(sent.error.is_none());
+
+        let fetched = courier.get_email(EmailId(sent.id)).await.unwrap();
+        assert_eq!(fetched.id, sent.id);
+
+        let listed = courier.list_email(project, 10, None).await.unwrap();
+        assert_eq!(listed.iter().map(|e| e.id).collect::<Vec<_>>(), [sent.id]);
+
+        let listed = courier
+            .list_email_from_domain(&name, 10, None)
+            .await
+            .unwrap();
+        assert_eq!(listed.iter().map(|e| e.id).collect::<Vec<_>>(), [sent.id]);
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn send_live_email_from_unverified_domain_records_failure(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let name = domain();
+        courier
+            .create_sender_identity(DomainOwner::Project(project), &name)
+            .await
+            .unwrap();
+        let from = format!("noreply@{name}");
+        let to = [String::from("someone@example.org")];
+
+        let sent = courier
+            .send_email(project, &mail(&from, &to), SendMode::Live)
+            .await
+            .unwrap();
+
+        assert_eq!(sent.status, EmailStatus::Failed);
+        assert_eq!(sent.mode, SendMode::Live);
+        assert!(sent.provider_message_id.is_none());
+        assert!(sent.error.is_some());
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn send_email_from_unknown_domain_is_not_found(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let from = format!("noreply@{}", domain());
+        let to = [String::from("someone@example.org")];
+
+        let err = courier
+            .send_email(project, &mail(&from, &to), SendMode::Test)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, CourierError::NotFound), "{err:?}");
+        assert!(
+            courier
+                .list_email(project, 10, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn send_email_from_invalid_address_is_rejected(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let to = [String::from("someone@example.org")];
+
+        let err = courier
+            .send_email(project, &mail("not-an-address", &to), SendMode::Test)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, CourierError::InvalidAddress(_)), "{err:?}");
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn get_unknown_email_is_not_found(pool: PgPool) {
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+
+        let err = courier
+            .get_email(EmailId(Uuid::new_v4()))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, CourierError::NotFound), "{err:?}");
     }
 }
