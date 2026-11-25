@@ -1,5 +1,6 @@
 use crate::domains::{DnsRecord, DomainCheck, DomainStatus};
 use aws_sdk_sesv2::config::http::HttpResponse;
+use aws_sdk_sesv2::config::retry::RetryConfig;
 use aws_sdk_sesv2::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
 use aws_sdk_sesv2::operation::create_email_identity::{
     CreateEmailIdentityError, CreateEmailIdentityOutput,
@@ -130,6 +131,9 @@ impl MailProvider for SesMailProvider {
                     .build(),
             )
             .content(EmailContent::builder().simple(message).build())
+            .customize()
+            // no send retry
+            .config_override(aws_sdk_sesv2::Config::builder().retry_config(RetryConfig::disabled()))
             .send()
             .await
             .map_err(|err| match err.as_service_error() {

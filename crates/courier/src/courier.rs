@@ -3,12 +3,15 @@ use std::str::FromStr;
 use db::PgPool;
 use email_address::EmailAddress;
 use identity::ProjectId;
+use idna::uts46::{AsciiDenyList, DnsLength, Hyphens, Uts46};
 
 use crate::{
     DomainId,
     courier::CourierError::NotFound,
     domains::{Domain, DomainCheck, DomainOwner, DomainRepo, PostgresDomainRepo},
-    mail::{Email, EmailId, EmailRepo, EmailStatus, NewEmail, PostgresEmailRepo, SendMode},
+    mail::{
+        Email, EmailId, EmailRepo, EmailStatus, NewEmail, PostgresEmailRepo, SendMode, SendOutcome,
+    },
     mail_provider::{MailProvider, MessageId, OutgoingEmail, ProviderError, SesMailProvider},
 };
 
@@ -25,6 +28,8 @@ pub enum CourierError {
     NotFound,
     #[error("domain taken")]
     Taken,
+    #[error("not a valid domain name: {0}")]
+    InvalidDomain(String),
     #[error(transparent)]
     InvalidAddress(#[from] email_address::Error),
     #[error(transparent)]
@@ -53,12 +58,13 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         owner: DomainOwner,
         domain: &str,
     ) -> Result<Domain, CourierError> {
-        let records = self.ses_provider.create_identity(domain).await?;
-        match self.domains.create(owner, domain, &records).await {
+        let domain = normalize_domain(domain)?;
+        let records = self.ses_provider.create_identity(&domain).await?;
+        match self.domains.create(owner, &domain, &records).await {
             Ok(domain) => Ok(domain),
             Err(err) => {
-                self.ses_provider.delete_identity(domain).await?;
-                Err(CourierError::Internal(err))
+                self.ses_provider.delete_identity(&domain).await?;
+                Err(domain_error(err))
             }
         }
     }
@@ -92,8 +98,12 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         domain: &str,
     ) -> Result<bool, CourierError> {
         let resolved = self.get_sender_identity(domain).await?;
-        match self.ses_provider.delete_identity(domain).await {
-            Ok(_) | Err(ProviderError::NotFound) => {
+        if resolved.owner() != owner {
+            return Ok(false);
+        }
+
+        match self.ses_provider.delete_identity(&resolved.domain).await {
+            Ok(()) | Err(ProviderError::NotFound) => {
                 Ok(self.domains.delete(owner, resolved.into()).await?)
             }
             Err(err) => Err(CourierError::Provider(err)),
@@ -161,6 +171,26 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
             return Err(CourierError::NotFound);
         }
 
+        let new = NewEmail {
+            domain: domain.into(),
+            status: EmailStatus::Unknown,
+            mode,
+            from_address: mail.from,
+            to_addresses: mail.to,
+            cc_addresses: mail.cc,
+            bcc_addresses: mail.bcc,
+            subject: mail.subject,
+            body: match mail.body {
+                crate::mail_provider::EmailBody::Text(t) => t,
+                crate::mail_provider::EmailBody::Html(h) => h,
+                crate::mail_provider::EmailBody::Both { html, text: _ } => html,
+            },
+            provider_message_id: None,
+            error: None,
+        };
+        // record before send in case it fails
+        let pending = self.email.create(project_id, &new).await?;
+
         let mail_id = match mode {
             SendMode::Live => self.ses_provider.send_email(mail).await,
             SendMode::Test => Ok(test_message()),
@@ -173,26 +203,51 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
             }
             Err(e) => (EmailStatus::Failed, None, Some(e.to_string())),
         };
-
-        let mail = NewEmail {
-            domain: domain.into(),
+        let outcome = SendOutcome {
             status,
-            mode,
-            from_address: mail.from,
-            to_addresses: mail.to,
-            cc_addresses: mail.cc,
-            bcc_addresses: mail.bcc,
-            subject: mail.subject,
-            body: match mail.body {
-                crate::mail_provider::EmailBody::Text(t) => t,
-                crate::mail_provider::EmailBody::Html(h) => h,
-                crate::mail_provider::EmailBody::Both { html, text: _ } => html,
-            },
             provider_message_id: id.as_deref(),
             error: error.as_deref(),
         };
 
-        Ok(self.email.create(project_id, &mail).await?)
+        match self
+            .email
+            .record_outcome(EmailId(pending.id), &outcome)
+            .await
+        {
+            Ok(Some(email)) => Ok(email),
+            Ok(None) | Err(_) => Ok(pending),
+        }
+    }
+}
+
+fn normalize_domain(domain: &str) -> Result<String, CourierError> {
+    let invalid = || CourierError::InvalidDomain(domain.to_string());
+    let trimmed = domain.trim().trim_end_matches('.');
+
+    let ascii = Uts46::new()
+        .to_ascii(
+            trimmed.as_bytes(),
+            AsciiDenyList::STD3,
+            Hyphens::CheckFirstLast,
+            DnsLength::Verify,
+        )
+        .map_err(|_| invalid())?;
+
+    match ascii.rsplit_once('.') {
+        Some((_, tld)) if !tld.bytes().all(|b| b.is_ascii_digit()) => Ok(ascii.into_owned()),
+        _ => Err(invalid()),
+    }
+}
+
+fn domain_error(err: anyhow::Error) -> CourierError {
+    let constraint = err
+        .downcast_ref::<sqlx::Error>()
+        .and_then(|e| e.as_database_error())
+        .and_then(|e| e.constraint());
+
+    match constraint {
+        Some("domains_domain_key") => CourierError::Taken,
+        _ => err.into(),
     }
 }
 
@@ -348,6 +403,72 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ProviderError::NotFound), "{err:?}");
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn delete_sender_identity_by_another_owner_leaves_it(pool: PgPool) {
+        let owner = create_project(&pool, "owner").await;
+        let other = create_project(&pool, "other").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+        let name = domain();
+        courier
+            .create_sender_identity(DomainOwner::Project(owner), &name)
+            .await
+            .unwrap();
+
+        let deleted = courier
+            .delete_sender_identity(DomainOwner::Project(other), &name)
+            .await
+            .unwrap();
+
+        assert!(!deleted);
+        courier.get_sender_identity(&name).await.unwrap();
+        courier.ses_provider.check_identity(&name).await.unwrap();
+    }
+
+    #[sqlx::test(migrations = "../db/migrations")]
+    async fn create_sender_identity_rejects_non_domains(pool: PgPool) {
+        let project = create_project(&pool, "demo").await;
+        let Some(courier) = courier(pool).await else {
+            return;
+        };
+
+        let err = courier
+            .create_sender_identity(DomainOwner::Project(project), "someone@example.com")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, CourierError::InvalidDomain(_)), "{err:?}");
+    }
+
+    #[test]
+    fn normalize_domain_trims_and_lowercases() {
+        assert_eq!(normalize_domain(" Example.COM. ").unwrap(), "example.com");
+        assert_eq!(normalize_domain("a-b.c1.io").unwrap(), "a-b.c1.io");
+        assert_eq!(normalize_domain("München.de").unwrap(), "xn--mnchen-3ya.de");
+    }
+
+    #[test]
+    fn normalize_domain_rejects_non_hostnames() {
+        for bad in [
+            "",
+            "localhost",
+            "someone@example.com",
+            "not a domain",
+            "-a.com",
+            "a-.com",
+            "a..com",
+            "1.2.3.4",
+            "exa_mple.com",
+        ] {
+            assert!(
+                matches!(normalize_domain(bad), Err(CourierError::InvalidDomain(_))),
+                "{bad:?}"
+            );
+        }
+        assert!(normalize_domain(&format!("{}.com", "a".repeat(64))).is_err());
     }
 
     #[sqlx::test(migrations = "../db/migrations")]

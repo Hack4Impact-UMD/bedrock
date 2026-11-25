@@ -1,0 +1,1 @@
+drop index courier.emails_domain_id_created_at_idx;

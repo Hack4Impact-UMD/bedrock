@@ -95,6 +95,7 @@ dependencies = [
  "identity",
  "lambda_http",
  "serde",
+ "serde_json",
  "tokio",
  "uuid",
 ]
@@ -911,6 +912,7 @@ dependencies = [
  "db",
  "email_address",
  "identity",
+ "idna",
  "serde",
  "sqlx",
  "thiserror",

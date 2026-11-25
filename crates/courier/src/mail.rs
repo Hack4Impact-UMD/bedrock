@@ -68,12 +68,26 @@ pub struct NewEmail<'a> {
     pub error: Option<&'a str>,
 }
 
+/// What the provider said about a send.
+#[derive(Debug)]
+pub struct SendOutcome<'a> {
+    pub status: EmailStatus,
+    pub provider_message_id: Option<&'a str>,
+    pub error: Option<&'a str>,
+}
+
 pub trait EmailRepo {
     fn create(
         &self,
         project: ProjectId,
         email: &NewEmail<'_>,
     ) -> impl Future<Output = Result<Email>> + Send;
+    /// Records the provider's answer for an email created before it was sent.
+    fn record_outcome(
+        &self,
+        id: EmailId,
+        outcome: &SendOutcome<'_>,
+    ) -> impl Future<Output = Result<Option<Email>>> + Send;
     fn get(&self, id: EmailId) -> impl Future<Output = Result<Option<Email>>> + Send;
     /// Newest first. Pass the last email of a page as `before` to get the next page.
     fn list(
@@ -131,6 +145,29 @@ impl EmailRepo for PostgresEmailRepo {
         Ok(email)
     }
 
+    async fn record_outcome(
+        &self,
+        id: EmailId,
+        outcome: &SendOutcome<'_>,
+    ) -> Result<Option<Email>> {
+        let email: Option<Email> = sqlx::query_as(
+            r"
+        update courier.emails
+        set status = $2, provider_message_id = $3, error = $4
+        where id = $1
+        returning *
+        ",
+        )
+        .bind(id.0)
+        .bind(outcome.status)
+        .bind(outcome.provider_message_id)
+        .bind(outcome.error)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(email)
+    }
+
     async fn get(&self, id: EmailId) -> Result<Option<Email>> {
         let email: Option<Email> = sqlx::query_as(
             r"
@@ -145,8 +182,6 @@ impl EmailRepo for PostgresEmailRepo {
         Ok(email)
     }
 
-    // Keyset pagination over the (project_id, created_at desc, id) index. A `before` id that
-    // doesn't belong to the project matches nothing, so the page is empty.
     async fn list(
         &self,
         project: ProjectId,
