@@ -56,7 +56,39 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Start AWS emulator
+        env:
+          EMULATOR_TELEMETRY: "off"
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/aws-emulator.deb" \
+            https://downloads.aws.com/aws-emulator/packages/aws-emulator/LTS/latest/aws-emulator_amd64.deb
+          sudo apt-get install -y "$RUNNER_TEMP/aws-emulator.deb"
+          aws-emulator -v
+          nohup aws-emulator -p 9297 >"$RUNNER_TEMP/aws-emulator.log" 2>&1 &
+          dir="$HOME/.aws/emulator/9297"
+          for _ in $(seq 30); do
+            [[ -f "$dir/ca.pem" ]] &&
+              curl -sf --cacert "$dir/ca.pem" https://127.0.0.1:9297/__admin/health && break
+            sleep 1
+          done
+          curl -sf --cacert "$dir/ca.pem" https://127.0.0.1:9297/__admin/health ||
+            { tail -20 "$RUNNER_TEMP/aws-emulator.log"; exit 1; }
+          # The Rust SDK trusts certs via SSL_CERT_FILE, which replaces the system
+          # store, so combine both or cargo can no longer reach crates.io.
+          cat /etc/ssl/certs/ca-certificates.crt "$dir/ca.pem" >"$RUNNER_TEMP/ca-bundle.pem"
+          {
+            echo "AWS_ENDPOINT_URL=https://127.0.0.1:9297"
+            echo "AWS_SHARED_CREDENTIALS_FILE=$dir/emulator_credentials"
+            echo "AWS_CONFIG_FILE=$dir/config"
+            echo "AWS_EC2_METADATA_DISABLED=true"
+            echo "AWS_DISABLE_HOST_PREFIX_INJECTION=true"
+            echo "AWS_REGION=us-east-1"
+            echo "SSL_CERT_FILE=$RUNNER_TEMP/ca-bundle.pem"
+          } >>"$GITHUB_ENV"
       - run: cargo test --workspace --locked
+      - name: AWS emulator log
+        if: failure()
+        run: tail -100 "$RUNNER_TEMP/aws-emulator.log"
 
   build:
     runs-on: ubuntu-latest

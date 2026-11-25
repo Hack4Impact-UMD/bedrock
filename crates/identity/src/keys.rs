@@ -71,7 +71,6 @@ pub(crate) async fn insert_key(
     .bind(name)
     .bind(prefix)
     .bind(hash)
-    .persistent(false)
     .fetch_one(db)
     .await?;
 
@@ -103,7 +102,6 @@ impl ApiKeyRepo for PostgresApiKeyRepo {
         )
         .bind(hash)
         .bind(prefix)
-        .persistent(false)
         .fetch_optional(&self.db)
         .await?;
 
@@ -129,7 +127,6 @@ impl ApiKeyRepo for PostgresApiKeyRepo {
         )
         .bind(project.0)
         .bind(id.0)
-        .persistent(false)
         .fetch_optional(&self.db)
         .await?;
 
@@ -145,7 +142,6 @@ impl ApiKeyRepo for PostgresApiKeyRepo {
         ",
         )
         .bind(project.0)
-        .persistent(false)
         .fetch_all(&self.db)
         .await?;
 
@@ -161,7 +157,6 @@ impl ApiKeyRepo for PostgresApiKeyRepo {
         ",
         )
         .bind(id.0)
-        .persistent(false)
         .execute(&self.db)
         .await?;
 
@@ -180,7 +175,6 @@ impl ApiKeyRepo for PostgresApiKeyRepo {
         )
         .bind(project.0)
         .bind(id.0)
-        .persistent(false)
         .fetch_optional(&self.db)
         .await?;
 
@@ -196,7 +190,6 @@ impl ApiKeyRepo for PostgresApiKeyRepo {
         )
         .bind(project.0)
         .bind(id.0)
-        .persistent(false)
         .execute(&self.db)
         .await?;
 

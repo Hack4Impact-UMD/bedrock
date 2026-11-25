@@ -51,7 +51,6 @@ async fn insert_project(db: impl PgExecutor<'_>, slug: &str, name: &str) -> Resu
     )
     .bind(slug)
     .bind(name)
-    .persistent(false)
     .fetch_one(db)
     .await?;
 
@@ -105,7 +104,6 @@ impl ProjectRepo for PostgresProjectRepo {
         ",
         )
         .bind(id.0)
-        .persistent(false)
         .fetch_optional(&self.db)
         .await?;
 
@@ -120,7 +118,6 @@ impl ProjectRepo for PostgresProjectRepo {
         ",
         )
         .bind(slug)
-        .persistent(false)
         .fetch_optional(&self.db)
         .await?;
 
@@ -134,7 +131,6 @@ impl ProjectRepo for PostgresProjectRepo {
         order by created_at
         ",
         )
-        .persistent(false)
         .fetch_all(&self.db)
         .await?;
 
@@ -152,7 +148,6 @@ impl ProjectRepo for PostgresProjectRepo {
         )
         .bind(id.0)
         .bind(name)
-        .persistent(false)
         .fetch_optional(&self.db)
         .await?;
 
@@ -167,7 +162,6 @@ impl ProjectRepo for PostgresProjectRepo {
         ",
         )
         .bind(id.0)
-        .persistent(false)
         .execute(&self.db)
         .await?;
 
