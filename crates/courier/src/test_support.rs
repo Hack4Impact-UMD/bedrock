@@ -36,10 +36,9 @@ fn skip<T>(reason: &str) -> Option<T> {
 fn loopback_addr(endpoint: &str) -> Option<SocketAddr> {
     let (default_port, rest) = if let Some(rest) = endpoint.strip_prefix("https://") {
         (443, rest)
-    } else if let Some(rest) = endpoint.strip_prefix("http://") {
-        (80, rest)
     } else {
-        return None;
+        let rest = endpoint.strip_prefix("http://")?;
+        (80, rest)
     };
     let authority = rest.split('/').next()?;
     let addrs: Vec<SocketAddr> = match authority.to_socket_addrs() {
