@@ -91,9 +91,10 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         owner: DomainOwner,
         domain: &str,
     ) -> Result<bool, CourierError> {
+        let resolved = self.get_sender_identity(domain).await?;
         match self.ses_provider.delete_identity(domain).await {
             Ok(_) | Err(ProviderError::NotFound) => {
-                Ok(self.domains.delete_by_name(owner, domain).await?)
+                Ok(self.domains.delete(owner, resolved.into()).await?)
             }
             Err(err) => Err(CourierError::Provider(err)),
         }
@@ -154,6 +155,11 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
             .get_by_name(addr.domain())
             .await?
             .ok_or(CourierError::NotFound)?;
+
+        let owner = domain.owner();
+        if owner != DomainOwner::Shared && owner != DomainOwner::Project(project_id) {
+            return Err(CourierError::NotFound);
+        }
 
         let mail_id = match mode {
             SendMode::Live => self.ses_provider.send_email(mail).await,
