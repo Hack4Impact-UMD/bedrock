@@ -8,7 +8,7 @@ use crate::{
     DomainId,
     courier::CourierError::NotFound,
     domains::{Domain, DomainCheck, DomainOwner, DomainRepo, PostgresDomainRepo},
-    mail::{Email, EmailId, EmailRepo, NewEmail, PostgresEmailRepo, SendMode},
+    mail::{Email, EmailId, EmailRepo, EmailStatus, NewEmail, PostgresEmailRepo, SendMode},
     mail_provider::{MailProvider, MessageId, OutgoingEmail, ProviderError, SesMailProvider},
 };
 
@@ -166,13 +166,17 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
             SendMode::Test => Ok(test_message()),
         };
 
-        let (id, error) = match mail_id {
-            Ok(id) => (Some(id.0), None),
-            Err(e) => (None, Some(e.to_string())),
+        let (status, id, error) = match mail_id {
+            Ok(id) => (EmailStatus::Sent, Some(id.0), None),
+            Err(e @ ProviderError::Uncertain(_)) => {
+                (EmailStatus::Unknown, None, Some(e.to_string()))
+            }
+            Err(e) => (EmailStatus::Failed, None, Some(e.to_string())),
         };
 
         let mail = NewEmail {
             domain: domain.into(),
+            status,
             mode,
             from_address: mail.from,
             to_addresses: mail.to,
@@ -195,7 +199,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{domains::DomainStatus, mail::EmailStatus, mail_provider::EmailBody};
+    use crate::{domains::DomainStatus, mail_provider::EmailBody};
     use uuid::Uuid;
 
     type PgCourier = Courier<PostgresDomainRepo, PostgresEmailRepo>;

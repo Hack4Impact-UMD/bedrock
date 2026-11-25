@@ -906,6 +906,7 @@ dependencies = [
  "anyhow",
  "aws-config",
  "aws-sdk-sesv2",
+ "aws-smithy-types",
  "chrono",
  "db",
  "email_address",

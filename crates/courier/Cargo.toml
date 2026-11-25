@@ -17,4 +17,5 @@ email_address.workspace = true
 
 [dev-dependencies]
 aws-config.workspace = true
+aws-smithy-types.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }

@@ -26,7 +26,11 @@ pub enum SendMode {
 #[serde(rename_all = "snake_case")]
 pub enum EmailStatus {
     Sent,
+    /// The provider definitely did not accept the message.
     Failed,
+    /// The send failed in a way that leaves it unclear whether the provider accepted the message,
+    /// so it may still be delivered. Callers must not treat it as safe to retry.
+    Unknown,
 }
 
 #[derive(FromRow, Debug, Serialize)]
@@ -48,10 +52,11 @@ pub struct Email {
     pub created_at: DateTime<Utc>,
 }
 
-/// The outcome of a send attempt, used to create its row. The status is `Failed` when `error` is set.
+/// used to create email row
 #[derive(Debug)]
 pub struct NewEmail<'a> {
     pub domain: DomainId,
+    pub status: EmailStatus,
     pub mode: SendMode,
     pub from_address: &'a str,
     pub to_addresses: &'a [String],
@@ -117,10 +122,7 @@ impl EmailRepo for PostgresEmailRepo {
         .bind(email.bcc_addresses)
         .bind(email.subject)
         .bind(email.body)
-        .bind(match email.error {
-            Some(_) => EmailStatus::Failed,
-            None => EmailStatus::Sent,
-        })
+        .bind(email.status)
         .bind(email.provider_message_id)
         .bind(email.error)
         .fetch_one(&self.db)
@@ -235,6 +237,7 @@ mod tests {
     fn email<'a>(domain: DomainId, to: &'a [String]) -> NewEmail<'a> {
         NewEmail {
             domain,
+            status: EmailStatus::Sent,
             mode: SendMode::Live,
             from_address: "hi@example.com",
             to_addresses: to,
@@ -279,25 +282,29 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../db/migrations")]
-    async fn error_marks_email_failed(pool: PgPool) {
+    async fn stores_failed_and_unknown_status(pool: PgPool) {
         let project = create_project(&pool, "demo").await;
         let domain = create_domain(&pool, DomainOwner::Project(project), "example.com").await;
         let repo = PostgresEmailRepo::new(pool);
         let to = vec!["a@test.com".to_string()];
 
-        let created = repo
-            .create(
-                project,
-                &NewEmail {
-                    error: Some("rejected"),
-                    ..email(domain, &to)
-                },
-            )
-            .await
-            .unwrap();
+        for status in [EmailStatus::Failed, EmailStatus::Unknown] {
+            let created = repo
+                .create(
+                    project,
+                    &NewEmail {
+                        status,
+                        provider_message_id: None,
+                        error: Some("boom"),
+                        ..email(domain, &to)
+                    },
+                )
+                .await
+                .unwrap();
 
-        assert_eq!(created.status, EmailStatus::Failed);
-        assert_eq!(created.error.as_deref(), Some("rejected"));
+            assert_eq!(created.status, status);
+            assert_eq!(created.error.as_deref(), Some("boom"));
+        }
     }
 
     #[sqlx::test(migrations = "../db/migrations")]

@@ -1,5 +1,6 @@
 use crate::domains::{DnsRecord, DomainCheck, DomainStatus};
-use aws_sdk_sesv2::error::{DisplayErrorContext, ProvideErrorMetadata};
+use aws_sdk_sesv2::config::http::HttpResponse;
+use aws_sdk_sesv2::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
 use aws_sdk_sesv2::operation::create_email_identity::{
     CreateEmailIdentityError, CreateEmailIdentityOutput,
 };
@@ -51,6 +52,8 @@ pub struct MessageId(pub String);
 pub enum ProviderError {
     #[error("rejected by provider: {0}")]
     Rejected(String),
+    #[error("provider outcome unknown: {0}")]
+    Uncertain(String),
     #[error("identity already exists")]
     AlreadyExists,
     #[error("identity not found")]
@@ -135,6 +138,9 @@ impl MailProvider for SesMailProvider {
                     | SendEmailError::MailFromDomainNotVerifiedException(_)
                     | SendEmailError::BadRequestException(_),
                 ) => ProviderError::Rejected(err.message().unwrap_or("rejected").to_string()),
+                _ if outcome_unknown(&err) => {
+                    ProviderError::Uncertain(DisplayErrorContext(&err).to_string())
+                }
                 _ => other(err),
             })?;
 
@@ -322,6 +328,17 @@ fn dns_records(
     records
 }
 
+fn outcome_unknown<E>(err: &SdkError<E, HttpResponse>) -> bool {
+    match err {
+        SdkError::ConstructionFailure(_) => false,
+        SdkError::DispatchFailure(failure) => !failure.is_user(),
+        SdkError::ServiceError(_) => err
+            .raw_response()
+            .is_none_or(|response| response.status().is_server_error()),
+        _ => true,
+    }
+}
+
 fn other(err: impl std::error::Error) -> ProviderError {
     ProviderError::Other(anyhow::anyhow!("{}", DisplayErrorContext(&err)))
 }
@@ -329,6 +346,33 @@ fn other(err: impl std::error::Error) -> ProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn service_error(status: u16) -> SdkError<SendEmailError, HttpResponse> {
+        use aws_smithy_types::body::SdkBody;
+
+        SdkError::service_error(
+            SendEmailError::unhandled("boom"),
+            HttpResponse::new(status.try_into().unwrap(), SdkBody::empty()),
+        )
+    }
+
+    #[test]
+    fn server_errors_and_timeouts_have_unknown_outcome() {
+        assert!(outcome_unknown(&service_error(500)));
+        assert!(outcome_unknown(&service_error(503)));
+        assert!(outcome_unknown(
+            &SdkError::<SendEmailError, HttpResponse>::timeout_error("slow")
+        ));
+    }
+
+    #[test]
+    fn client_errors_and_unsent_requests_are_definite() {
+        assert!(!outcome_unknown(&service_error(400)));
+        assert!(!outcome_unknown(&service_error(429)));
+        assert!(!outcome_unknown(
+            &SdkError::<SendEmailError, HttpResponse>::construction_failure("bad input")
+        ));
+    }
 
     #[test]
     fn dns_records_cover_dkim_mail_from_and_dmarc() {
