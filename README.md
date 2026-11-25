@@ -42,6 +42,10 @@ Alternatively, you can start the db and lambda separately by reading the `kickst
 Add migrations with `sqlx migrate add -r --source crates/db/migrations <name>`. Run `cargo test` to apply them to a
 scratch database.
 
+#### AWS Emulator
+
+To develop locally against the AWS emulator, use the `scripts/dev-emulator.sh` script. Tests that require the emulator will be skipped unless you use this script.
+
 ### CI checks
 
 CI does these checks on each pull request.

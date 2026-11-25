@@ -57,11 +57,10 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
     }
 
     pub async fn get_sender_identity(&self, domain: &str) -> Result<Domain, CourierError> {
-        Ok(self
-            .domains
+        self.domains
             .get_by_name(domain)
             .await?
-            .ok_or(CourierError::NotFound)?)
+            .ok_or(CourierError::NotFound)
     }
 
     pub async fn get_sender_identities_for_project(
@@ -90,7 +89,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
     }
 
     pub async fn get_email(&self, id: EmailId) -> Result<Email, CourierError> {
-        Ok(self.email.get(id).await?.ok_or(CourierError::NotFound)?)
+        self.email.get(id).await?.ok_or(CourierError::NotFound)
     }
 
     pub async fn list_email(
@@ -145,7 +144,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
 
         let mail = NewEmail {
             domain: domain.into(),
-            mode: mode,
+            mode,
             from_address: mail.from,
             to_addresses: mail.to,
             cc_addresses: mail.cc,
@@ -173,18 +172,8 @@ mod tests {
     type PgCourier = Courier<PostgresDomainRepo, PostgresEmailRepo>;
 
     async fn courier(pool: PgPool) -> Option<PgCourier> {
-        if std::env::var_os("AWS_ENDPOINT_URL").is_none() {
-            assert!(
-                std::env::var_os("CI").is_none(),
-                "AWS_ENDPOINT_URL must point at the AWS emulator in CI"
-            );
-            eprintln!("skipping: AWS_ENDPOINT_URL is not set");
-            return None;
-        }
-        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .load()
-            .await;
-        Some(Courier::postgres(pool, aws_sdk_sesv2::Client::new(&config)))
+        let client = crate::test_support::ses_client().await?;
+        Some(Courier::postgres(pool, client))
     }
 
     async fn create_project(pool: &PgPool, slug: &str) -> ProjectId {

@@ -4,6 +4,8 @@ mod courier;
 mod domains;
 mod mail;
 mod mail_provider;
+#[cfg(test)]
+mod test_support;
 
 pub use courier::CourierError;
 pub use domains::{Domain, DomainCheck, DomainId, DomainOwner, DomainStatus};

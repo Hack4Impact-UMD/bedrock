@@ -8,7 +8,6 @@ use aws_sdk_sesv2::types::{
     BehaviorOnMxFailure, Body, Content, Destination, EmailContent, MailFromDomainStatus, Message,
     VerificationStatus,
 };
-use uuid::{self};
 
 const MAIL_FROM_SUBDOMAIN: &str = "bounce";
 
@@ -347,24 +346,16 @@ mod tests {
 
     mod emulator {
         use super::*;
+        use uuid::Uuid;
 
         fn domain() -> String {
             format!("{}.example.com", Uuid::new_v4())
         }
 
         async fn provider() -> Option<SesMailProvider> {
-            if std::env::var_os("AWS_ENDPOINT_URL").is_none() {
-                assert!(
-                    std::env::var_os("CI").is_none(),
-                    "AWS_ENDPOINT_URL must point at the AWS emulator in CI"
-                );
-                eprintln!("skipping: AWS_ENDPOINT_URL is not set");
-                return None;
-            }
-            let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                .load()
-                .await;
-            Some(SesMailProvider::new(aws_sdk_sesv2::Client::new(&config)))
+            crate::test_support::ses_client()
+                .await
+                .map(SesMailProvider::new)
         }
 
         #[tokio::test]
