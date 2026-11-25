@@ -24,7 +24,8 @@ const TAG: &str = "courier";
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 100;
 
-/// Message content. Supply HTML, plain text, or both.
+/// Email body content. Supply HTML, plain text, or both. When only HTML is supplied, plaintext is
+/// rendered automatically with pter
 #[derive(Deserialize, Debug, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum EmailBody {
@@ -44,7 +45,7 @@ struct SendRequest {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body: EmailBody,
-    /// Defaults to `live`. `test` records the email without delivering it.
+    /// Defaults to `live`. Use `test` to record the email without actually delivering it.
     #[serde(default)]
     pub mode: Option<SendMode>,
 }
@@ -81,7 +82,9 @@ fn visible_to(domain: &Domain, project: ProjectId) -> bool {
     domain.owner() == DomainOwner::Shared || owned_by(domain, project)
 }
 
-/// List the domains this project can send from: its own, then shared ones.
+/// List the domains this project can send from.
+/// The domains the project directly owns will be listed first
+/// followed by shared domains.
 #[utoipa::path(
     get,
     path = "/domains",
@@ -133,7 +136,7 @@ async fn create_domain(
     Ok((StatusCode::CREATED, Json(domain)))
 }
 
-/// Get a domain this project can send from.
+/// Get details for a domain. The domain must either be shared or owned by the project.
 #[utoipa::path(
     get,
     path = "/domains/{domain}",
@@ -278,7 +281,7 @@ async fn list_mail(
     Ok(Json(emails))
 }
 
-/// Get an email sent by this project.
+/// Get details for an email sent by this project.
 #[utoipa::path(
     get,
     path = "/mail/{id}",

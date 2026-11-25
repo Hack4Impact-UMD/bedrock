@@ -20,7 +20,7 @@ pub struct AppState {
 
 #[derive(OpenApi)]
 #[openapi(
-    info(title = "bedrock", description = "Shared foundational services for Hack4Impact-UMD projects."),
+    info(title = "bedrock", description = "An API providing shared foundational services for Hack4Impact-UMD projects, including transactional email. Ask the Director of Engineering to provision an API key for your project to use bedrock. This page is automatically generated from the OpenAPI spec."),
     modifiers(&SecurityAddon),
     tags(
         (name = "health", description = "Service health"),

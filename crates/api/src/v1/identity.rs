@@ -10,7 +10,7 @@ use crate::{
 
 const TAG: &str = "identity";
 
-/// Get the project the API key belongs to.
+/// Get the project that owns the API key used in this request.
 #[utoipa::path(
     get,
     path = "/project",
