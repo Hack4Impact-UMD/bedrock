@@ -72,6 +72,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         owner: DomainOwner,
         domain: &str,
     ) -> Result<bool, CourierError> {
+        self.ses_provider.delete_identity(domain).await?;
         Ok(self.domains.delete_by_name(owner, domain).await?)
     }
 
