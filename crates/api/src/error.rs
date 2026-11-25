@@ -5,6 +5,14 @@ use axum::{
 };
 use courier::CourierError;
 use identity::IdentityError;
+use serde::Serialize;
+use utoipa::ToSchema;
+
+/// Body returned for client errors.
+#[derive(Serialize, ToSchema)]
+pub struct ErrorBody {
+    pub error: String,
+}
 
 pub enum ApiError {
     Identity(IdentityError),
@@ -60,10 +68,10 @@ impl IntoResponse for ApiError {
             return status.into_response();
         }
 
-        let message = match &self {
+        let error = match &self {
             Self::Identity(err) => err.to_string(),
             Self::Courier(err) => err.to_string(),
         };
-        (status, Json(serde_json::json!({ "error": message }))).into_response()
+        (status, Json(ErrorBody { error })).into_response()
     }
 }

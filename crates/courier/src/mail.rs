@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 use sqlx::types::chrono::DateTime;
 use sqlx::types::chrono::Utc;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::domains::DomainId;
@@ -12,7 +13,9 @@ use crate::domains::DomainId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EmailId(pub Uuid);
 
-#[derive(Default, sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Default, sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema,
+)]
 #[sqlx(type_name = "courier.send_mode", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum SendMode {
@@ -21,7 +24,7 @@ pub enum SendMode {
     Test,
 }
 
-#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[sqlx(type_name = "courier.email_status", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum EmailStatus {
@@ -33,7 +36,7 @@ pub enum EmailStatus {
     Unknown,
 }
 
-#[derive(FromRow, Debug, Serialize)]
+#[derive(FromRow, Debug, Serialize, ToSchema)]
 pub struct Email {
     pub id: Uuid,
     pub project_id: Uuid,

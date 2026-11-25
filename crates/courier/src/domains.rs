@@ -6,6 +6,7 @@ use sqlx::prelude::FromRow;
 use sqlx::types::Json;
 use sqlx::types::chrono::DateTime;
 use sqlx::types::chrono::Utc;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,7 +18,7 @@ impl From<Domain> for DomainId {
     }
 }
 
-#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[sqlx(type_name = "courier.domain_status", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum DomainStatus {
@@ -27,7 +28,7 @@ pub enum DomainStatus {
     TemporaryFailure,
 }
 
-#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[sqlx(type_name = "courier.domain_scope", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum DomainScope {
@@ -59,14 +60,14 @@ impl DomainOwner {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 pub struct DomainCheck {
     // verification status
     pub status: DomainStatus,
     pub mail_from_status: DomainStatus,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DnsRecord {
     #[serde(rename = "type")]
     pub record_type: String,
@@ -74,7 +75,7 @@ pub struct DnsRecord {
     pub value: String,
 }
 
-#[derive(FromRow, Debug, Serialize)]
+#[derive(FromRow, Debug, Serialize, ToSchema)]
 pub struct Domain {
     pub id: Uuid,
     /// None exactly when `scope` is shared.
@@ -83,6 +84,7 @@ pub struct Domain {
     pub domain: String,
     pub status: DomainStatus,
     pub mail_from_status: DomainStatus,
+    #[schema(value_type = Vec<DnsRecord>)]
     pub dns_records: Json<Vec<DnsRecord>>,
     pub created_at: DateTime<Utc>,
     pub last_checked_at: Option<DateTime<Utc>>,

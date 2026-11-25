@@ -16,6 +16,7 @@ aws-sdk-sesv2.workspace = true
 email_address.workspace = true
 idna.workspace = true
 pter.workspace = true
+utoipa.workspace = true
 
 [dev-dependencies]
 aws-config.workspace = true

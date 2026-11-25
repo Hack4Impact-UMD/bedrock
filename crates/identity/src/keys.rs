@@ -5,11 +5,12 @@ use sqlx::PgExecutor;
 use sqlx::prelude::FromRow;
 use sqlx::types::chrono::DateTime;
 use sqlx::types::chrono::Utc;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::identity::{ApiKeyId, ProjectId};
 
-#[derive(FromRow, Debug, Serialize)]
+#[derive(FromRow, Debug, Serialize, ToSchema)]
 pub struct ApiKey {
     pub id: Uuid,
     pub project_id: Uuid,
