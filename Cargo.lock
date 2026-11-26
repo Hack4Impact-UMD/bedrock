@@ -856,8 +856,11 @@ name = "cmd"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-config",
+ "aws-sdk-sesv2",
  "chrono",
  "clap",
+ "courier",
  "db",
  "dotenvy",
  "identity",

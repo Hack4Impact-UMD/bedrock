@@ -1,7 +1,8 @@
 use std::io::{self, BufRead, Write};
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use chrono::{DateTime, Utc};
+use courier::{Domain, DomainCheck};
 use identity::{ApiKey, NewApiKey, Project};
 use serde::Serialize;
 use serde_json::json;
@@ -14,6 +15,31 @@ pub struct Output {
 impl Output {
     pub fn new(json: bool) -> Self {
         Self { json }
+    }
+
+    pub fn domain(&self, domain: &Domain) -> Result<()> {
+        if self.json {
+            return print_json(domain);
+        }
+
+        print_fields(&domain_fields(domain));
+        println!("DNS:");
+        print_table(
+            ["TYPE", "NAME", "VALUE"],
+            domain
+                .dns_records
+                .iter()
+                .map(|rec| [rec.record_type.clone(), rec.name.clone(), rec.value.clone()]),
+        );
+        Ok(())
+    }
+
+    pub fn domain_check(&self, check: &DomainCheck) -> Result<()> {
+        if self.json {
+            return print_json(check);
+        }
+        print_fields(&check_fields(check));
+        Ok(())
     }
 
     pub fn project(&self, project: &Project) -> Result<()> {
@@ -127,6 +153,25 @@ pub fn confirm(question: &str) -> Result<bool> {
 fn print_json(value: &(impl Serialize + ?Sized)) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+fn check_fields(check: &DomainCheck) -> Vec<(&'static str, String)> {
+    vec![
+        ("Status", format!("{:?}", check.status)),
+        ("MAIL FROM Status", format!("{:?}", check.mail_from_status)),
+    ]
+}
+
+fn domain_fields(domain: &Domain) -> Vec<(&'static str, String)> {
+    vec![
+        ("ID", domain.id.to_string()),
+        ("Domain", domain.domain.clone()),
+        ("Owner", format!("{:?}", domain.owner())),
+        ("Status", format!("{:?}", domain.status)),
+        ("MAIL FROM Status", format!("{:?}", domain.mail_from_status)),
+        ("Created At", format_time(&domain.created_at)),
+        ("Verified At", format_optional_time(domain.verified_at)),
+    ]
 }
 
 fn project_fields(project: &Project) -> Vec<(&'static str, String)> {
