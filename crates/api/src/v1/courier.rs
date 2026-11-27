@@ -91,8 +91,8 @@ fn visible_to(domain: &Domain, project: ProjectId) -> bool {
     tag = TAG,
     security(("api_key" = [])),
     responses(
-        (status = 200, body = Vec<Domain>),
-        (status = 401, body = ErrorBody),
+        (status = 200, description = "Domains registered to the project", body = Vec<Domain>),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
     ),
 )]
 async fn get_domains(
@@ -117,8 +117,8 @@ async fn get_domains(
     security(("api_key" = [])),
     request_body = CreateDomainRequest,
     responses(
-        (status = 201, body = Domain),
-        (status = 401, body = ErrorBody),
+        (status = 201, description = "Domain registered", body = Domain),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
         (status = 409, description = "Domain already registered", body = ErrorBody),
         (status = 422, description = "Invalid domain", body = ErrorBody),
     ),
@@ -144,9 +144,9 @@ async fn create_domain(
     security(("api_key" = [])),
     params(("domain" = String, Path, description = "Domain name, e.g. `mail.example.org`")),
     responses(
-        (status = 200, body = Domain),
-        (status = 401, body = ErrorBody),
-        (status = 404, body = ErrorBody),
+        (status = 200, description = "The domain", body = Domain),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
+        (status = 404, description = "Domain not found", body = ErrorBody),
     ),
 )]
 async fn get_domain(
@@ -170,9 +170,9 @@ async fn get_domain(
     security(("api_key" = [])),
     params(("domain" = String, Path, description = "Domain name, e.g. `mail.example.org`")),
     responses(
-        (status = 200, body = DomainCheck),
-        (status = 401, body = ErrorBody),
-        (status = 404, body = ErrorBody),
+        (status = 200, description = "Current verification status", body = DomainCheck),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
+        (status = 404, description = "Domain not found", body = ErrorBody),
     ),
 )]
 async fn check_domain(
@@ -198,8 +198,8 @@ async fn check_domain(
     params(("domain" = String, Path, description = "Domain name, e.g. `mail.example.org`")),
     responses(
         (status = 204, description = "Domain deleted"),
-        (status = 401, body = ErrorBody),
-        (status = 404, body = ErrorBody),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
+        (status = 404, description = "Domain not found", body = ErrorBody),
     ),
 )]
 async fn delete_domain(
@@ -232,9 +232,9 @@ async fn delete_domain(
     security(("api_key" = [])),
     params(("domain" = String, Path, description = "Domain name, e.g. `mail.example.org`"), Page),
     responses(
-        (status = 200, body = Vec<Email>),
-        (status = 401, body = ErrorBody),
-        (status = 404, body = ErrorBody),
+        (status = 200, description = "Emails sent", body = Vec<Email>),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
+        (status = 404, description = "Domain not found", body = ErrorBody),
     ),
 )]
 async fn list_domain_mail(
@@ -264,8 +264,8 @@ async fn list_domain_mail(
     security(("api_key" = [])),
     params(Page),
     responses(
-        (status = 200, body = Vec<Email>),
-        (status = 401, body = ErrorBody),
+        (status = 200, description = "Emails sent", body = Vec<Email>),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
     ),
 )]
 async fn list_mail(
@@ -289,9 +289,9 @@ async fn list_mail(
     security(("api_key" = [])),
     params(("id" = Uuid, Path, description = "Email id")),
     responses(
-        (status = 200, body = Email),
-        (status = 401, body = ErrorBody),
-        (status = 404, body = ErrorBody),
+        (status = 200, description = "The email", body = Email),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
+        (status = 404, description = "Email not found", body = ErrorBody),
     ),
 )]
 async fn get_mail(
@@ -317,9 +317,9 @@ async fn get_mail(
     security(("api_key" = [])),
     request_body = SendRequest,
     responses(
-        (status = 200, body = Email),
+        (status = 200, description = "The recorded email", body = Email),
         (status = 400, description = "Invalid address", body = ErrorBody),
-        (status = 401, body = ErrorBody),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
         (status = 404, description = "Sender domain not found", body = ErrorBody),
         (status = 422, description = "Rejected by the mail provider", body = ErrorBody),
     ),
