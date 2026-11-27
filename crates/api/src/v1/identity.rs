@@ -17,8 +17,8 @@ const TAG: &str = "identity";
     tag = TAG,
     security(("api_key" = [])),
     responses(
-        (status = 200, body = Project),
-        (status = 401, body = ErrorBody),
+        (status = 200, description = "The project", body = Project),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
     ),
 )]
 async fn get_project(
@@ -38,7 +38,7 @@ async fn get_project(
     security(("api_key" = [])),
     responses(
         (status = 200, description = "The revoked key", body = ApiKey),
-        (status = 401, body = ErrorBody),
+        (status = 401, description = "Missing or invalid API key", body = ErrorBody),
     ),
 )]
 async fn revoke_key(

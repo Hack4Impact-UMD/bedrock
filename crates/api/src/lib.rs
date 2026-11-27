@@ -35,6 +35,8 @@ struct SecurityAddon;
 
 impl Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        openapi.info.license = None;
+
         let components = openapi.components.get_or_insert_with(Default::default);
         components.add_security_scheme(
             "api_key",
@@ -52,7 +54,7 @@ struct HealthResponse {
     get,
     path = "/health",
     tag = "health",
-    responses((status = 200, body = HealthResponse)),
+    responses((status = 200, description = "Service is healthy", body = HealthResponse)),
 )]
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
