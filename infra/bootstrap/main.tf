@@ -95,9 +95,16 @@ data "aws_iam_policy_document" "lambda_boundary" {
   }
 
   statement {
-    sid       = "SendEmail"
-    actions   = ["ses:SendEmail", "ses:SendRawEmail"]
-    resources = ["*"]
+    sid = "SesIdentities"
+    actions = [
+      "ses:SendEmail",
+      "ses:SendRawEmail",
+      "ses:CreateEmailIdentity",
+      "ses:GetEmailIdentity",
+      "ses:DeleteEmailIdentity",
+      "ses:PutEmailIdentityMailFromAttributes",
+    ]
+    resources = ["arn:aws:ses:*:${local.account_id}:identity/*"]
   }
 }
 
