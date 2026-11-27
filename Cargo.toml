@@ -21,7 +21,7 @@ dotenvy = "0.15.7"
 db = { path = "crates/db" }
 identity = { path = "crates/identity" }
 courier = { path = "crates/courier" }
-aws-config = "1.13.0"
+aws-config = {version = "1.13.0", features = ["credentials-login"]}
 aws-sdk-sesv2 = "1.145.0"
 aws-smithy-types = "1.9.1"
 email_address = "0.2.10"
