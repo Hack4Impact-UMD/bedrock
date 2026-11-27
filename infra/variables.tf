@@ -19,12 +19,6 @@ variable "lambda_zip" {
   default     = "../target/lambda/api/bootstrap.zip"
 }
 
-variable "ses_identities" {
-  description = "Already-verified SES identities (domains or email addresses) the Lambda may send from. Empty means no SES access."
-  type        = list(string)
-  default     = []
-}
-
 variable "lambda_boundary_name" {
   description = "Permissions boundary created by infra/bootstrap. The deploy role can only create roles that carry it."
   type        = string

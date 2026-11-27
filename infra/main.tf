@@ -29,21 +29,27 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# Any identity in this account/region: projects register their own domains at
+# runtime, so identities can't be enumerated here. Ownership is checked in the API.
 data "aws_iam_policy_document" "lambda_ses" {
-  count = length(var.ses_identities) == 0 ? 0 : 1
-
   statement {
-    actions   = ["ses:SendEmail", "ses:SendRawEmail"]
-    resources = [for id in var.ses_identities : "arn:aws:ses:${var.region}:${local.account_id}:identity/${id}"]
+    sid = "SesIdentities"
+    actions = [
+      "ses:SendEmail",
+      "ses:SendRawEmail",
+      "ses:CreateEmailIdentity",
+      "ses:GetEmailIdentity",
+      "ses:DeleteEmailIdentity",
+      "ses:PutEmailIdentityMailFromAttributes",
+    ]
+    resources = ["arn:aws:ses:${var.region}:${local.account_id}:identity/*"]
   }
 }
 
 resource "aws_iam_role_policy" "lambda_ses" {
-  count = length(var.ses_identities) == 0 ? 0 : 1
-
-  name   = "ses-send"
+  name   = "ses"
   role   = aws_iam_role.lambda_exec.id
-  policy = data.aws_iam_policy_document.lambda_ses[0].json
+  policy = data.aws_iam_policy_document.lambda_ses.json
 }
 
 # --- Function -----------------------------------------------------------------
