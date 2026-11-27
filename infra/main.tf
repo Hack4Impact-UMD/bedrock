@@ -70,6 +70,8 @@ resource "aws_lambda_function" "api" {
   memory_size      = 128
   timeout          = 10
 
+  reserved_concurrent_executions = var.lambda_reserved_concurrency
+
   environment {
     variables = {
       DATABASE_URL = var.database_url
@@ -106,6 +108,12 @@ resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.api.id
   name        = "$default"
   auto_deploy = true
+
+  # Global limit shared by all clients
+  default_route_settings {
+    throttling_rate_limit  = var.throttle_rate_limit
+    throttling_burst_limit = var.throttle_burst_limit
+  }
 }
 
 resource "aws_lambda_permission" "apigw" {

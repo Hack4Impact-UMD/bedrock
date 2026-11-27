@@ -166,6 +166,8 @@ data "aws_iam_policy_document" "deploy" {
       "lambda:DeleteFunction",
       "lambda:UpdateFunctionCode",
       "lambda:UpdateFunctionConfiguration",
+      "lambda:PutFunctionConcurrency",
+      "lambda:DeleteFunctionConcurrency",
       "lambda:PublishVersion",
       "lambda:AddPermission",
       "lambda:RemovePermission",

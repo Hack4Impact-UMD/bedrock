@@ -36,3 +36,21 @@ variable "api_domain" {
   type        = string
   default     = "bedrock.umdh4i.org"
 }
+
+variable "throttle_rate_limit" {
+  description = "Steady-state requests per second allowed across all clients, enforced by API Gateway before Lambda runs."
+  type        = number
+  default     = 25
+}
+
+variable "throttle_burst_limit" {
+  description = "Token bucket size for API Gateway throttling: how far above the steady rate a short burst can go."
+  type        = number
+  default     = 50
+}
+
+variable "lambda_reserved_concurrency" {
+  description = "Maximum concurrent Lambda instances. Each holds up to db::MAX_CONNECTIONS Postgres connections, so this also caps load on Neon."
+  type        = number
+  default     = 10
+}
