@@ -8,7 +8,7 @@ mod mail_provider;
 mod test_support;
 
 pub use courier::CourierError;
-pub use domains::{Domain, DomainCheck, DomainId, DomainOwner, DomainStatus};
+pub use domains::{DnsRecord, Domain, DomainCheck, DomainId, DomainOwner, DomainStatus};
 pub use mail::SendMode;
 pub use mail::{Email, EmailId};
 pub use mail_provider::EmailBody;

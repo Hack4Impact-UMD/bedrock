@@ -1,9 +1,12 @@
 use anyhow::Context;
+use aws_config::BehaviorVersion;
 use clap::{Parser, Subcommand};
+use courier::PgCourierService;
 use identity::PgIdentityService;
 
-use crate::{key::KeyCmd, output::Output, project::ProjectCmd};
+use crate::{domain::DomainCmd, key::KeyCmd, output::Output, project::ProjectCmd};
 
+mod domain;
 mod key;
 mod output;
 mod project;
@@ -29,6 +32,9 @@ enum Command {
     /// Manage a project's API keys.
     #[command(subcommand)]
     Key(KeyCmd),
+    /// Manage domains.
+    #[command(subcommand)]
+    Domain(DomainCmd),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -44,12 +50,18 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&cli.database_url)
         .await
         .context("failed to connect to the database")?;
-    let identity = PgIdentityService::postgres(pool);
+
+    let config = aws_config::load_defaults(BehaviorVersion::v2026_01_12()).await;
+    let ses_client = aws_sdk_sesv2::client::Client::new(&config);
+
+    let identity = PgIdentityService::postgres(pool.clone());
+    let courier = PgCourierService::postgres(pool, ses_client);
     let out = Output::new(cli.json);
 
     match cli.command {
         Command::Project(cmd) => project::run(cmd, &identity, &out).await,
         Command::Key(cmd) => key::run(cmd, &identity, &out).await,
+        Command::Domain(cmd) => domain::run(cmd, &courier, &out).await,
     }
 }
 

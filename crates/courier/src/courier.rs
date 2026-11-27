@@ -70,8 +70,9 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
     }
 
     pub async fn get_sender_identity(&self, domain: &str) -> Result<Domain, CourierError> {
+        let domain = normalize_domain(domain)?;
         self.domains
-            .get_by_name(domain)
+            .get_by_name(&domain)
             .await?
             .ok_or(CourierError::NotFound)
     }
@@ -84,8 +85,9 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
     }
 
     pub async fn check_domain_status(&self, domain: &str) -> Result<DomainCheck, CourierError> {
-        let d = self.get_sender_identity(domain).await?;
-        let status = self.ses_provider.check_identity(domain).await?;
+        let domain = normalize_domain(domain)?;
+        let d = self.get_sender_identity(&domain).await?;
+        let status = self.ses_provider.check_identity(&domain).await?;
 
         self.domains.record_check(d.into(), status).await?;
 
@@ -97,7 +99,8 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         owner: DomainOwner,
         domain: &str,
     ) -> Result<bool, CourierError> {
-        let resolved = self.get_sender_identity(domain).await?;
+        let domain = normalize_domain(domain)?;
+        let resolved = self.get_sender_identity(&domain).await?;
         if resolved.owner() != owner {
             return Ok(false);
         }
@@ -131,7 +134,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
     ) -> Result<Vec<Email>, CourierError> {
         let domain = self
             .domains
-            .get_by_name(from_domain)
+            .get_by_name(&normalize_domain(from_domain)?)
             .await?
             .ok_or(NotFound)?;
 
@@ -162,7 +165,7 @@ impl<D: DomainRepo, M: EmailRepo> Courier<D, M> {
         let addr = EmailAddress::from_str(mail.from)?;
         let domain = self
             .domains
-            .get_by_name(addr.domain())
+            .get_by_name(&normalize_domain(addr.domain())?)
             .await?
             .ok_or(CourierError::NotFound)?;
 
