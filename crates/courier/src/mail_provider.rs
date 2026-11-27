@@ -229,7 +229,7 @@ impl MailProvider for SesMailProvider {
             Some(unknown) => {
                 return Err(anyhow::anyhow!(
                     "unknown SES verification status for {domain}: {}",
-                    unknown.as_str()
+                    &unknown
                 )
                 .into());
             }
@@ -246,7 +246,7 @@ impl MailProvider for SesMailProvider {
             Some(unknown) => {
                 return Err(anyhow::anyhow!(
                     "unknown SES MAIL FROM status for {domain}: {}",
-                    unknown.as_str()
+                    &unknown
                 )
                 .into());
             }

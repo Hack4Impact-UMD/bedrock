@@ -5,7 +5,7 @@ use courier::PgCourierService;
 use uuid::Uuid;
 
 use crate::output::{Output, confirm};
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 #[derive(Clone, Debug)]
 pub enum DomainOwner {
@@ -58,30 +58,25 @@ pub enum DomainCmd {
 pub async fn run(cmd: DomainCmd, courier: &PgCourierService, out: &Output) -> Result<()> {
     match cmd {
         DomainCmd::Create { name, owner } => {
-            let domain = courier
-                .create_sender_identity(owner.into(), name.as_str())
-                .await?;
+            let domain = courier.create_sender_identity(owner.into(), &name).await?;
             out.domain(&domain)
         }
         DomainCmd::Delete { name, owner } => {
-            if let Ok(true) = confirm(format!("Are you sure you want to delete {name}?").as_str()) {
-                if courier
-                    .delete_sender_identity(owner.into(), name.as_str())
-                    .await?
-                {
-                    println!("deleted {}", name);
+            if let Ok(true) = confirm(&format!("Are you sure you want to delete {name}?")) {
+                if courier.delete_sender_identity(owner.into(), &name).await? {
+                    out.done(&format!("deleted {}", name));
                 } else {
-                    println!("failed to delete {}", name);
+                    bail!("failed to delete {}", name);
                 }
             }
             Ok(())
         }
         DomainCmd::Check { name } => {
-            let resp = courier.check_domain_status(name.as_str()).await?;
+            let resp = courier.check_domain_status(&name).await?;
             out.domain_check(&resp)
         }
         DomainCmd::Get { name } => {
-            let domain = courier.get_sender_identity(name.as_str()).await?;
+            let domain = courier.get_sender_identity(&name).await?;
             out.domain(&domain)
         }
     }
